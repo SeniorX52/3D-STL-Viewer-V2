@@ -1,0 +1,15 @@
+# 3D STL Insole Adapter - Dependencies
+# Install with: pip install -r requirements.txt
+
+PySide6>=6.5.0          # Qt GUI framework (LGPL license)
+numpy>=1.24.0           # Numerical computing
+trimesh>=4.0.0          # STL/mesh processing
+scipy>=1.11.0           # Scientific computing (used by trimesh)
+networkx>=3.0           # Graph operations (used by trimesh)
+shapely>=2.0.0          # Geometric operations
+vtk>=9.2.0              # VTK for GPU-accelerated 3D rendering
+mapbox-earcut>=2.0.0    # Polygon triangulation for text extrusion
+manifold3d>=3.0.0       # 3D boolean operations
+matplotlib>=3.5.0       # For font-based text mesh generation
+fonttools>=4.0.0        # Font file processing
+pyinstaller>=6.0.0      # For building standalone .exe
