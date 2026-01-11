@@ -43,3 +43,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# STL model files (too large for git)
+*.stl
+models/
