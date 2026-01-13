@@ -334,66 +334,54 @@ class MainWindow(QMainWindow):
         scale_group = QGroupBox("Scaling")
         scale_layout = QGridLayout(scale_group)
         
-        # Foot uniform scale (scales both foot and linked insole)
-        scale_layout.addWidget(QLabel("Foot Scale:"), 0, 0)
-        self.foot_scale_slider = NoWheelSlider(Qt.Orientation.Horizontal)
-        self.foot_scale_slider.setRange(50, 150)  # 50% to 150%
-        self.foot_scale_slider.setValue(100)
-        self.foot_scale_slider.valueChanged.connect(self._on_foot_scale_changed)
-        scale_layout.addWidget(self.foot_scale_slider, 0, 1)
-        self.foot_scale_label = QLabel("100%")
-        self.foot_scale_label.setFixedWidth(45)
-        scale_layout.addWidget(self.foot_scale_label, 0, 2)
-        
-        # Foot scale info
-        foot_scale_info = QLabel("(Scales foot + linked insole)")
-        foot_scale_info.setStyleSheet("color: #666; font-size: 10px;")
-        scale_layout.addWidget(foot_scale_info, 1, 0, 1, 3)
-        
         # Current insole dimensions
-        scale_layout.addWidget(QLabel("Current Insole Size:"), 2, 0, 1, 2)
+        scale_layout.addWidget(QLabel("Current Insole Size:"), 0, 0, 1, 2)
         self.current_dims_label = QLabel("X: -- mm  Y: -- mm  Z: -- mm")
         self.current_dims_label.setStyleSheet("font-family: monospace;")
-        scale_layout.addWidget(self.current_dims_label, 3, 0, 1, 3)
+        scale_layout.addWidget(self.current_dims_label, 1, 0, 1, 3)
         
         # Auto scale button
         self.auto_scale_btn = QPushButton("Auto Scale to Foot")
         self.auto_scale_btn.setStyleSheet("background-color: #2196F3; color: white; padding: 8px;")
         self.auto_scale_btn.clicked.connect(self._auto_scale)
-        scale_layout.addWidget(self.auto_scale_btn, 4, 0, 1, 3)
+        scale_layout.addWidget(self.auto_scale_btn, 2, 0, 1, 3)
         
         # Manual scale inputs for insole
-        scale_layout.addWidget(QLabel("Insole Scale X:"), 5, 0)
+        # X axis: absolute mm value (target length)
+        scale_layout.addWidget(QLabel("Insole Length (X):"), 3, 0)
         self.scale_x_spin = QDoubleSpinBox()
-        self.scale_x_spin.setRange(0.1, 10.0)
-        self.scale_x_spin.setValue(1.0)
-        self.scale_x_spin.setSingleStep(0.05)
-        self.scale_x_spin.setDecimals(3)
-        scale_layout.addWidget(self.scale_x_spin, 5, 1)
+        self.scale_x_spin.setRange(50.0, 500.0)  # 50mm to 500mm
+        self.scale_x_spin.setValue(250.0)  # Default 250mm
+        self.scale_x_spin.setSingleStep(1.0)
+        self.scale_x_spin.setDecimals(1)
+        self.scale_x_spin.setSuffix(" mm")
+        scale_layout.addWidget(self.scale_x_spin, 3, 1)
         
-        scale_layout.addWidget(QLabel("Insole Scale Y:"), 6, 0)
+        # Y axis: percentage scale
+        scale_layout.addWidget(QLabel("Insole Scale Y:"), 4, 0)
         self.scale_y_spin = QDoubleSpinBox()
         self.scale_y_spin.setRange(0.1, 10.0)
         self.scale_y_spin.setValue(1.0)
         self.scale_y_spin.setSingleStep(0.05)
         self.scale_y_spin.setDecimals(3)
-        scale_layout.addWidget(self.scale_y_spin, 6, 1)
+        scale_layout.addWidget(self.scale_y_spin, 4, 1)
         
-        scale_layout.addWidget(QLabel("Insole Scale Z:"), 7, 0)
+        # Z axis: percentage scale
+        scale_layout.addWidget(QLabel("Insole Scale Z:"), 5, 0)
         self.scale_z_spin = QDoubleSpinBox()
         self.scale_z_spin.setRange(0.1, 10.0)
         self.scale_z_spin.setValue(1.0)
         self.scale_z_spin.setSingleStep(0.05)
         self.scale_z_spin.setDecimals(3)
-        scale_layout.addWidget(self.scale_z_spin, 7, 1)
+        scale_layout.addWidget(self.scale_z_spin, 5, 1)
         
         self.apply_scale_btn = QPushButton("Apply Insole Scale")
         self.apply_scale_btn.clicked.connect(self._apply_manual_scale)
-        scale_layout.addWidget(self.apply_scale_btn, 8, 0, 1, 2)
+        scale_layout.addWidget(self.apply_scale_btn, 6, 0, 1, 2)
         
         self.reset_insole_btn = QPushButton("Reset Insole")
         self.reset_insole_btn.clicked.connect(self._reset_insole)
-        scale_layout.addWidget(self.reset_insole_btn, 8, 2)
+        scale_layout.addWidget(self.reset_insole_btn, 6, 2)
         
         layout.addWidget(scale_group)
         
@@ -500,6 +488,7 @@ class MainWindow(QMainWindow):
         label_layout.addWidget(QLabel("Side:"), 1, 0)
         self.side_combo = QComboBox()
         self.side_combo.addItems(["L (Left)", "R (Right)"])
+        self.side_combo.setCurrentIndex(1)  # Default to R (Right)
         label_layout.addWidget(self.side_combo, 1, 1, 1, 2)
         
         label_layout.addWidget(QLabel("Date:"), 2, 0)
@@ -791,9 +780,6 @@ class MainWindow(QMainWindow):
         # Align requires foot, insole, and 3 points
         self.align_insole_btn.setEnabled(has_foot and has_insole and has_points)
         
-        # Foot scale slider requires foot
-        self.foot_scale_slider.setEnabled(has_foot)
-        
         # Scaling requires insole
         self.auto_scale_btn.setEnabled(has_insole and has_points)
         self.apply_scale_btn.setEnabled(has_insole)
@@ -1006,14 +992,6 @@ class MainWindow(QMainWindow):
                 # Clear any existing reference points
                 self._clear_points()
                 
-                # Reset foot scale slider
-                self.foot_scale_slider.blockSignals(True)
-                self.foot_scale_slider.setValue(100)
-                self.foot_scale_slider.blockSignals(False)
-                self.foot_scale_label.setText("100%")
-                self._original_foot_mesh = None
-                self._foot_scale_base = 100
-                
                 # Get foot length and display
                 foot_length = self.processor.get_foot_length()
                 self.dimensions_label.setText(f"Foot length (X): {foot_length:.1f} mm")
@@ -1041,8 +1019,8 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("Detecting foot side and finding best matching insole...")
             QApplication.processEvents()
             
-            # Detect if foot is left or right
-            foot_side = self.processor.detect_foot_side()
+            # Detect if foot is left or right (check filename first, then geometry)
+            foot_side = self.processor.detect_foot_side(self.foot_file_path)
             
             # Update side selector in UI
             if foot_side == 'L':
@@ -1070,6 +1048,12 @@ class MainWindow(QMainWindow):
                 
                 # Reset position sliders
                 self._reset_position_sliders_ui_only()
+                
+                # Update scale spinboxes - X gets current dimension in mm
+                current_dims = self.processor.get_insole_dimensions()
+                self.scale_x_spin.setValue(current_dims[0])
+                self.scale_y_spin.setValue(1.0)
+                self.scale_z_spin.setValue(1.0)
                 
                 # Get insole length for display
                 insole_bounds = mesh.bounds
@@ -1118,6 +1102,12 @@ class MainWindow(QMainWindow):
                 mesh = self.processor.insole_mesh
             
             self.viewer.set_insole_mesh(mesh)
+            
+            # Update scale spinboxes - X gets current dimension in mm
+            current_dims = self.processor.get_insole_dimensions()
+            self.scale_x_spin.setValue(current_dims[0])
+            self.scale_y_spin.setValue(1.0)
+            self.scale_z_spin.setValue(1.0)
             
             # Set isometric view for better 3D visualization
             self.viewer.set_view('iso')
@@ -1267,10 +1257,17 @@ class MainWindow(QMainWindow):
             # Reset to original first to get consistent results
             self.processor.reset_insole()
             
-            # Apply scale
-            scale_x = self.scale_x_spin.value()
+            # Get current (original) insole X dimension in mm
+            current_dims = self.processor.get_insole_dimensions()
+            current_x_mm = current_dims[0]
+            
+            # Get target X in mm and Y/Z as multipliers
+            target_x_mm = self.scale_x_spin.value()
             scale_y = self.scale_y_spin.value()
             scale_z = self.scale_z_spin.value()
+            
+            # Calculate X scale factor from mm target
+            scale_x = target_x_mm / current_x_mm if current_x_mm > 0 else 1.0
             
             self.processor.scale_insole(scale_x, scale_y, scale_z)
             
@@ -1278,7 +1275,7 @@ class MainWindow(QMainWindow):
             self.viewer.set_insole_mesh(self.processor.insole_mesh)
             
             self.status_bar.showMessage(
-                f"Manual scale applied: X={scale_x:.3f}, Y={scale_y:.3f}, Z={scale_z:.3f}"
+                f"Scaled: X={target_x_mm:.1f}mm, Y={scale_y:.2f}x, Z={scale_z:.2f}x"
             )
             self._update_ui_state()
             
@@ -1292,8 +1289,9 @@ class MainWindow(QMainWindow):
             if mesh is not None:
                 self.viewer.set_insole_mesh(mesh)
                 
-                # Reset scale spinboxes
-                self.scale_x_spin.setValue(1.0)
+                # Reset scale spinboxes - X gets current dimension in mm
+                current_dims = self.processor.get_insole_dimensions()
+                self.scale_x_spin.setValue(current_dims[0])
                 self.scale_y_spin.setValue(1.0)
                 self.scale_z_spin.setValue(1.0)
                 

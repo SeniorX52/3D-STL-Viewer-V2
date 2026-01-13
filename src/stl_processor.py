@@ -354,67 +354,31 @@ class STLProcessor:
         bounds = self.foot_mesh.bounds
         return float(bounds[1][0] - bounds[0][0])
     
-    def detect_foot_side(self) -> str:
+    def detect_foot_side(self, foot_filepath: Optional[str] = None) -> str:
         """
-        Detect if the foot is left or right based on geometry.
+        Detect if the foot is left or right based on filename keywords.
         
-        Uses the asymmetry of the foot shape - the big toe side is wider.
-        Looking at the foot from above (XY plane), with toes pointing in +Y:
-        - For a RIGHT foot, the big toe is on the LEFT side (-X)
-        - For a LEFT foot, the big toe is on the RIGHT side (+X)
+        Checks filename for side indicators (L/R, left/right, links/rechts).
+        Defaults to 'R' (right) if no indicators found.
+        
+        Args:
+            foot_filepath: Optional path to check filename for side indicators
         
         Returns:
-            'L' for left foot, 'R' for right foot
+            'L' for left foot, 'R' for right foot (default)
         """
-        if self.foot_mesh is None:
-            return 'R'  # Default to right
+        # Check filename for side indicators
+        if foot_filepath:
+            fname = os.path.basename(foot_filepath).lower()
+            # Check for left indicators
+            if '_l_' in fname or '_l.' in fname or '_left' in fname or 'left_' in fname or fname.startswith('l_') or 'links' in fname or ' l ' in fname:
+                return 'L'
+            # Check for right indicators
+            if '_r_' in fname or '_r.' in fname or '_right' in fname or 'right_' in fname or fname.startswith('r_') or 'rechts' in fname or ' r ' in fname:
+                return 'R'
         
-        # Get vertices
-        vertices = self.foot_mesh.vertices
-        bounds = self.foot_mesh.bounds
-        
-        # Focus on the front half of the foot (toe area)
-        y_mid = (bounds[0][1] + bounds[1][1]) / 2
-        front_vertices = vertices[vertices[:, 1] > y_mid]
-        
-        if len(front_vertices) < 10:
-            return 'R'  # Default if not enough vertices
-        
-        # Get the centroid of the front part
-        front_centroid_x = np.mean(front_vertices[:, 0])
-        
-        # Get centroid of the whole foot
-        whole_centroid_x = np.mean(vertices[:, 0])
-        
-        # Calculate mass distribution on left vs right of the front
-        left_count = np.sum(front_vertices[:, 0] < front_centroid_x)
-        right_count = np.sum(front_vertices[:, 0] > front_centroid_x)
-        
-        # The side with more mass (big toe side) is wider
-        # Alternative: check width distribution in the toe area
-        x_coords = front_vertices[:, 0]
-        
-        # Split into quarters along Y (front to back of toe area)
-        y_front = front_vertices[:, 1]
-        y_75 = np.percentile(y_front, 75)  # Very front (toes)
-        
-        toe_vertices = front_vertices[y_front > y_75]
-        if len(toe_vertices) < 5:
-            toe_vertices = front_vertices
-        
-        # Measure width on left vs right of center
-        center_x = (bounds[0][0] + bounds[1][0]) / 2
-        left_extent = center_x - np.min(toe_vertices[:, 0])
-        right_extent = np.max(toe_vertices[:, 0]) - center_x
-        
-        # The side with greater extent has the big toe
-        # Big toe on left = right foot, big toe on right = left foot
-        if left_extent > right_extent * 1.1:  # 10% threshold
-            return 'R'  # Big toe on left side = right foot
-        elif right_extent > left_extent * 1.1:
-            return 'L'  # Big toe on right side = left foot
-        else:
-            return 'R'  # Default to right if symmetric
+        # Default to right if no indicators found
+        return 'R'
     
     def find_best_matching_insole(self, insole_dir: str, foot_side: Optional[str] = None) -> Optional[str]:
         """
@@ -458,12 +422,12 @@ class STLProcessor:
             for f in insole_files:
                 fname = os.path.basename(f).lower()
                 if foot_side.lower() == 'l':
-                    # Look for left indicators
-                    if '_l_' in fname or '_l.' in fname or '_left' in fname or 'left_' in fname or fname.startswith('l_'):
+                    # Look for left indicators (including German 'links')
+                    if '_l_' in fname or '_l.' in fname or '_left' in fname or 'left_' in fname or fname.startswith('l_') or 'links' in fname:
                         side_filtered.append(f)
                 elif foot_side.lower() == 'r':
-                    # Look for right indicators
-                    if '_r_' in fname or '_r.' in fname or '_right' in fname or 'right_' in fname or fname.startswith('r_'):
+                    # Look for right indicators (including German 'rechts')
+                    if '_r_' in fname or '_r.' in fname or '_right' in fname or 'right_' in fname or fname.startswith('r_') or 'rechts' in fname:
                         side_filtered.append(f)
             
             # If we found side-specific insoles, use only those
