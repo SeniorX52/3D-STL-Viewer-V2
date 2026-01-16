@@ -101,7 +101,10 @@ class STLProcessor:
         # Currently applied label (to detect changes)
         self._current_label: Optional[str] = None
         
-        # Reference points on the foot (heel, 1st metatarsal, 5th metatarsal)
+        # Store label parameters for re-application after mirroring
+        self._label_params: Optional[dict] = None
+        
+        # Reference points on the foot (heel, toe tip, left side, right side)
         self.reference_points: List[np.ndarray] = []
         
         # Insole-foot linking state
@@ -146,6 +149,7 @@ class STLProcessor:
             # Reset label state when loading new insole
             self._insole_before_label = None
             self._current_label = None
+            self._label_params = None
             
             return self.insole_mesh
         except Exception as e:
@@ -159,33 +163,41 @@ class STLProcessor:
             # Reset label state
             self._insole_before_label = None
             self._current_label = None
+            self._label_params = None
             
             return self.insole_mesh
         return None
     
     def set_reference_points(self, points: List[np.ndarray]) -> None:
-        """Set reference points on the foot."""
-        if len(points) != 3:
-            raise ValueError("Exactly 3 reference points required")
+        """Set reference points on the foot (4 points: heel, toe, left, right)."""
+        if len(points) != 4:
+            raise ValueError("Exactly 4 reference points required")
         self.reference_points = [np.array(p) for p in points]
     
     def calculate_foot_dimensions(self) -> Tuple[float, float]:
         """
-        Calculate foot dimensions based on reference points.
+        Calculate foot dimensions based on 4 reference points.
+        
+        Points: heel, toe (front center), left side, right side
+        The left/right points should be at the widest part of the foot,
+        perpendicular (90 degrees) to the length axis.
         
         Returns:
             Tuple of (length, width)
         """
-        if len(self.reference_points) != 3:
-            raise ValueError("Reference points not set")
+        if len(self.reference_points) != 4:
+            raise ValueError("4 reference points required (heel, toe, left, right)")
         
         heel = self.reference_points[0]
-        meta1 = self.reference_points[1]
-        meta5 = self.reference_points[2]
+        toe = self.reference_points[1]
+        left_side = self.reference_points[2]
+        right_side = self.reference_points[3]
         
-        meta_midpoint = (meta1 + meta5) / 2
-        length = np.linalg.norm(meta_midpoint - heel)
-        width = np.linalg.norm(meta1 - meta5)
+        # Length is distance from heel to toe
+        length = np.linalg.norm(toe - heel)
+        
+        # Width is distance from left to right side points
+        width = np.linalg.norm(right_side - left_side)
         
         return float(length), float(width)
     
@@ -211,6 +223,11 @@ class STLProcessor:
         ])
         
         self.insole_mesh.apply_transform(scale_matrix)
+        
+        # Update original mesh so position sliders use scaled mesh as base
+        # This prevents scaling from jumping back when moving the insole
+        if self.original_insole_mesh is not None:
+            self.original_insole_mesh = self.insole_mesh.copy()
         
         # If we had a label, we need to update the before-label state
         # because scaling should persist through label changes
@@ -239,9 +256,23 @@ class STLProcessor:
         return scale_x, scale_y, final_scale_z
     
     def mirror_insole(self, axis: str = 'x') -> trimesh.Trimesh:
-        """Mirror the insole mesh along specified axis."""
+        """
+        Mirror the insole mesh along specified axis.
+        
+        If a label exists, it is removed before mirroring to prevent
+        backwards/upside-down text. User should add label after mirroring.
+        """
         if self.insole_mesh is None:
             raise ValueError("No insole loaded")
+        
+        # Save label parameters before mirroring (if label exists)
+        had_label = self._insole_before_label is not None
+        saved_label_params = self._label_params.copy() if self._label_params else None
+        
+        # If there's a label, restore the pre-label state first
+        # This prevents the label from being mirrored (which would make it backwards)
+        if self._insole_before_label is not None:
+            self.insole_mesh = self._insole_before_label.copy()
         
         if axis.lower() == 'x':
             reflection_matrix = np.array([
@@ -268,24 +299,65 @@ class STLProcessor:
         self.insole_mesh.apply_transform(reflection_matrix)
         self.insole_mesh.fix_normals()
         
-        # Update before-label state if exists
-        if self._insole_before_label is not None:
-            self._insole_before_label = self.insole_mesh.copy()
-            self._current_label = None
+        # Update original mesh so position sliders use mirrored mesh as base
+        if self.original_insole_mesh is not None:
+            self.original_insole_mesh = self.insole_mesh.copy()
+        
+        # Clear label state
+        self._insole_before_label = None
+        self._current_label = None
+        
+        # Re-apply label at mirrored position if it existed
+        if had_label and saved_label_params:
+            # Mirror the label position
+            if saved_label_params.get('custom_position') is not None:
+                pos = saved_label_params['custom_position'].copy()
+                normal = saved_label_params.get('custom_normal')
+                
+                # Mirror the position based on axis
+                if axis.lower() == 'x':
+                    pos[0] = -pos[0]
+                    if normal is not None:
+                        normal = normal.copy()
+                        normal[0] = -normal[0]
+                elif axis.lower() == 'y':
+                    pos[1] = -pos[1]
+                    if normal is not None:
+                        normal = normal.copy()
+                        normal[1] = -normal[1]
+                else:  # z
+                    pos[2] = -pos[2]
+                    if normal is not None:
+                        normal = normal.copy()
+                        normal[2] = -normal[2]
+                
+                saved_label_params['custom_position'] = pos
+                saved_label_params['custom_normal'] = normal
+            
+            # Re-apply the label with mirrored position but readable text
+            try:
+                self.add_text_label(**saved_label_params)
+            except Exception as e:
+                print(f"Could not re-apply label after mirror: {e}")
+                self._label_params = None
         
         return self.insole_mesh
     
     def align_insole_to_foot(self) -> trimesh.Trimesh:
         """
-        Align the insole to the foot using reference points.
+        Align the insole to the foot using 4 reference points.
         
-        The insole is positioned under the foot's sole:
-        - Centered under the foot
-        - NO rotation applied (insole keeps original orientation)
-        - Positioned at the bottom of the foot
+        The insole is:
+        1. Centered under the foot along the heel-toe axis
+        2. Positioned very close to the bottom of the foot
         
-        Requires 3 reference points on the foot (heel, 1st meta, 5th meta).
-        Always resets to original insole first for consistent results.
+        No rotation is applied - insole keeps its original orientation.
+        
+        Reference points:
+        - Point 0: Heel (back center)
+        - Point 1: Toe (front center) - defines length axis with heel
+        - Point 2: Left side (widest point)
+        - Point 3: Right side (widest point) - defines width axis
         
         Returns:
             Aligned insole mesh
@@ -294,8 +366,8 @@ class STLProcessor:
             raise ValueError("No foot mesh loaded")
         if self.insole_mesh is None:
             raise ValueError("No insole mesh loaded")
-        if len(self.reference_points) < 3:
-            raise ValueError("Need 3 reference points on foot (heel, 1st metatarsal, 5th metatarsal)")
+        if len(self.reference_points) < 4:
+            raise ValueError("Need 4 reference points on foot (heel, toe, left side, right side)")
         
         # IMPORTANT: Reset to original insole first for consistent alignment
         if self.original_insole_mesh is not None:
@@ -305,26 +377,26 @@ class STLProcessor:
         
         # Get foot reference points
         heel_pt = np.array(self.reference_points[0])
-        meta1_pt = np.array(self.reference_points[1])  # Big toe side
-        meta5_pt = np.array(self.reference_points[2])  # Pinky toe side
+        toe_pt = np.array(self.reference_points[1])
+        left_pt = np.array(self.reference_points[2])
+        right_pt = np.array(self.reference_points[3])
         
-        # Calculate foot center (midpoint between heel and metatarsals midpoint)
-        meta_mid = (meta1_pt + meta5_pt) / 2
-        foot_center_xy = (heel_pt[:2] + meta_mid[:2]) / 2
+        # Calculate foot center (midpoint between heel and toe)
+        foot_center_xy = (heel_pt[:2] + toe_pt[:2]) / 2
         
         # Get foot sole position (lowest Z of the reference points)
-        foot_bottom_z = min(heel_pt[2], meta1_pt[2], meta5_pt[2])
+        foot_bottom_z = min(heel_pt[2], toe_pt[2], left_pt[2], right_pt[2])
         
         # Get insole bounds
         insole_bounds = self.insole_mesh.bounds
         insole_center = (insole_bounds[0] + insole_bounds[1]) / 2
         insole_top_z = insole_bounds[1][2]
         
-        # Position insole: center it under the foot, top surface at foot bottom
+        # Position insole: center it under the foot, top surface very close to foot bottom
         translation = np.array([
             foot_center_xy[0] - insole_center[0],
             foot_center_xy[1] - insole_center[1],
-            foot_bottom_z - insole_top_z - 1  # 1mm below foot
+            foot_bottom_z - insole_top_z - 0.1  # 0.1mm below foot (near-touching)
         ])
         
         self.insole_mesh.vertices += translation
@@ -529,7 +601,7 @@ class STLProcessor:
     def position_insole_below_foot(self) -> Optional[trimesh.Trimesh]:
         """
         Position the insole directly below the foot without using reference points.
-        Centers the insole under the foot and places it at the bottom.
+        Centers the insole under the foot and places it very close to the foot surface.
         
         Returns:
             Positioned insole mesh, or None if meshes not loaded
@@ -547,11 +619,12 @@ class STLProcessor:
         insole_center = (insole_bounds[0] + insole_bounds[1]) / 2
         insole_top_z = insole_bounds[1][2]
         
-        # Translate insole to be centered under foot, with top at foot bottom
+        # Translate insole to be centered under foot, with top very close to foot bottom
+        # Use 0.1mm gap for near-touching visual check
         translation = np.array([
             foot_center_xy[0] - insole_center[0],
             foot_center_xy[1] - insole_center[1],
-            foot_bottom_z - insole_top_z - 1  # 1mm gap
+            foot_bottom_z - insole_top_z - 0.1  # 0.1mm gap (near-touching)
         ])
         
         self.insole_mesh.vertices += translation
@@ -703,6 +776,24 @@ class STLProcessor:
         
         if not text.strip():
             return self.insole_mesh
+        
+        # Store label parameters for re-application after mirroring
+        self._label_params = {
+            'text': text,
+            'position': position,
+            'depth': depth,
+            'font_size': font_size,
+            'z_offset': z_offset,
+            'engrave': engrave,
+            'custom_position': custom_position.copy() if custom_position is not None else None,
+            'custom_normal': custom_normal.copy() if custom_normal is not None else None,
+            'offset_x': offset_x,
+            'offset_y': offset_y,
+            'rotation': rotation,
+            'wrap_to_surface': wrap_to_surface,
+            'mirror_horizontal': mirror_horizontal,
+            'mirror_vertical': mirror_vertical
+        }
         
         # Force label re-creation if parameters changed
         label_key = f"{text}_{position}_{offset_x}_{offset_y}_{rotation}_{wrap_to_surface}_{mirror_horizontal}_{mirror_vertical}"

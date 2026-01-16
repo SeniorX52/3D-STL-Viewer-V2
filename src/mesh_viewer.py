@@ -223,8 +223,8 @@ class VTKMeshViewer(QWidget):
             self.add_reference_point(point)
             self.point_picked.emit(point)
             
-            # Disable picking after 3 points
-            if len(self.reference_points) >= 3:
+            # Disable picking after 4 points
+            if len(self.reference_points) >= 4:
                 self.set_picking_mode(False)
     
 
@@ -434,7 +434,7 @@ class VTKMeshViewer(QWidget):
     
     def add_reference_point(self, point: np.ndarray):
         """Add a reference point marker."""
-        if len(self.reference_points) >= 3:
+        if len(self.reference_points) >= 4:
             return
         
         self.reference_points.append(np.array(point))
