@@ -107,6 +107,12 @@ class STLProcessor:
         # Reference points on the foot (heel, toe tip, left side, right side)
         self.reference_points: List[np.ndarray] = []
         
+        # Insole surface reference point (5th point - on insole's internal surface)
+        self.insole_surface_point: Optional[np.ndarray] = None
+        
+        # Last insole translation (for updating insole surface point in viewer)
+        self._last_insole_translation: Optional[np.ndarray] = None
+        
         # Insole-foot linking state
         self._insole_linked = False  # Whether insole is linked to foot
         self._link_offset = None  # Relative offset from foot centroid to insole centroid
@@ -211,9 +217,29 @@ class STLProcessor:
         return tuple(dimensions)
     
     def scale_insole(self, scale_x: float, scale_y: float, scale_z: float = 1.0) -> trimesh.Trimesh:
-        """Scale the insole mesh by given factors."""
+        """
+        Scale the insole mesh by given factors while preserving alignment to foot sole.
+        
+        The scaling is performed around the insole's centroid to prevent drifting.
+        After scaling, the insole is repositioned so its top surface still aligns
+        with the foot sole (if foot mesh is loaded).
+        """
         if self.insole_mesh is None:
             raise ValueError("No insole loaded")
+        
+        # Get the position to preserve (top Z relative to foot sole)
+        preserve_foot_alignment = self.foot_mesh is not None
+        if preserve_foot_alignment:
+            foot_sole_z = self.foot_mesh.bounds[0][2]
+            insole_top_z_before = self.insole_mesh.bounds[1][2]
+            # Calculate how far the insole top is from foot sole
+            z_offset_from_sole = insole_top_z_before - foot_sole_z
+        
+        # Store centroid before scaling
+        centroid_before = self.insole_mesh.centroid.copy()
+        
+        # Move to origin, scale, move back - this keeps the centroid position stable
+        self.insole_mesh.vertices -= centroid_before
         
         scale_matrix = np.array([
             [scale_x, 0, 0, 0],
@@ -224,10 +250,32 @@ class STLProcessor:
         
         self.insole_mesh.apply_transform(scale_matrix)
         
+        # Move back to original centroid position (X/Y)
+        new_centroid = self.insole_mesh.centroid.copy()
+        self.insole_mesh.vertices[:, :2] += centroid_before[:2] - new_centroid[:2]
+        
+        # For Z: reposition so the insole top maintains same offset from foot sole
+        if preserve_foot_alignment:
+            insole_top_z_after = self.insole_mesh.bounds[1][2]
+            # Move insole Z so its top is at the same offset from foot sole
+            target_top_z = foot_sole_z + z_offset_from_sole
+            z_adjustment = target_top_z - insole_top_z_after
+            self.insole_mesh.vertices[:, 2] += z_adjustment
+        else:
+            # No foot, just preserve centroid Z
+            self.insole_mesh.vertices[:, 2] += centroid_before[2] - self.insole_mesh.centroid[2]
+        
         # Update original mesh so position sliders use scaled mesh as base
         # This prevents scaling from jumping back when moving the insole
         if self.original_insole_mesh is not None:
             self.original_insole_mesh = self.insole_mesh.copy()
+        
+        # Update insole surface point if it exists (scale it proportionally)
+        if self.insole_surface_point is not None:
+            # Scale the surface point relative to old centroid
+            relative_pos = self.insole_surface_point - centroid_before
+            scaled_relative = relative_pos * np.array([scale_x, scale_y, scale_z])
+            self.insole_surface_point = self.insole_mesh.centroid + scaled_relative
         
         # If we had a label, we need to update the before-label state
         # because scaling should persist through label changes
@@ -345,19 +393,21 @@ class STLProcessor:
     
     def align_insole_to_foot(self) -> trimesh.Trimesh:
         """
-        Align the insole to the foot using 4 reference points.
+        Align the insole to the foot using 4 foot reference points and optional 5th insole surface point.
         
         The insole is:
-        1. Centered under the foot along the heel-toe axis
-        2. Positioned very close to the bottom of the foot
+        1. Centered under the foot along the heel-toe axis (X/Y positioning)
+        2. Positioned so the insole's internal surface (5th point) touches the actual foot sole
         
         No rotation is applied - insole keeps its original orientation.
+        The 5th point only affects Z-axis positioning (vertical alignment to foot sole).
         
         Reference points:
-        - Point 0: Heel (back center)
-        - Point 1: Toe (front center) - defines length axis with heel
-        - Point 2: Left side (widest point)
-        - Point 3: Right side (widest point) - defines width axis
+        - Point 0: Heel (back center) on foot
+        - Point 1: Toe (front center) on foot - defines length axis with heel
+        - Point 2: Left side (widest point) on foot
+        - Point 3: Right side (widest point) on foot - defines width axis
+        - Point 5 (optional): Insole internal surface point - for accurate Z alignment to foot sole
         
         Returns:
             Aligned insole mesh
@@ -378,28 +428,47 @@ class STLProcessor:
         # Get foot reference points
         heel_pt = np.array(self.reference_points[0])
         toe_pt = np.array(self.reference_points[1])
-        left_pt = np.array(self.reference_points[2])
-        right_pt = np.array(self.reference_points[3])
         
-        # Calculate foot center (midpoint between heel and toe)
+        # Calculate foot center (midpoint between heel and toe) for X/Y positioning
         foot_center_xy = (heel_pt[:2] + toe_pt[:2]) / 2
         
-        # Get foot sole position (lowest Z of the reference points)
-        foot_bottom_z = min(heel_pt[2], toe_pt[2], left_pt[2], right_pt[2])
+        # Get ACTUAL foot sole position - the lowest Z point of the entire foot mesh
+        # This is the bottom of the 3D foot model, not just the reference points
+        foot_bounds = self.foot_mesh.bounds
+        foot_sole_z = foot_bounds[0][2]  # bounds[0] is the minimum (lowest Z = sole)
         
-        # Get insole bounds
+        # Get insole bounds and center
         insole_bounds = self.insole_mesh.bounds
         insole_center = (insole_bounds[0] + insole_bounds[1]) / 2
-        insole_top_z = insole_bounds[1][2]
         
-        # Position insole: center it under the foot, top surface very close to foot bottom
+        # Calculate Z positioning based on whether we have the 5th point (insole surface)
+        if self.insole_surface_point is not None:
+            # Use the 5th point: align insole surface point's Z to the foot sole Z
+            # The 5th point marks where the insole's internal surface is
+            insole_surface_z = self.insole_surface_point[2]
+            # Move insole so its surface point Z aligns with foot sole Z (with small gap)
+            z_translation = foot_sole_z - insole_surface_z + 0.1  # 0.1mm gap below foot sole
+        else:
+            # Fallback: use insole top surface (bounding box top)
+            insole_top_z = insole_bounds[1][2]
+            z_translation = foot_sole_z - insole_top_z + 0.1  # Position top at foot sole
+        
+        # Calculate full translation (X/Y from reference points, Z from foot sole)
         translation = np.array([
             foot_center_xy[0] - insole_center[0],
             foot_center_xy[1] - insole_center[1],
-            foot_bottom_z - insole_top_z - 0.1  # 0.1mm below foot (near-touching)
+            z_translation
         ])
         
+        # Store translation for updating the insole surface point in viewer
+        self._last_insole_translation = translation.copy()
+        
+        # Apply translation (no rotation - only position adjustment)
         self.insole_mesh.vertices += translation
+        
+        # Update the stored insole surface point to match new position
+        if self.insole_surface_point is not None:
+            self.insole_surface_point = self.insole_surface_point + translation
         
         # Update original mesh to match - this becomes the new zero point for sliders
         self.original_insole_mesh = self.insole_mesh.copy()

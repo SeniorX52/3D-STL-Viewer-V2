@@ -32,6 +32,7 @@ class VTKMeshViewer(QWidget):
     
     # Signal emitted when a point is picked on the mesh
     point_picked = Signal(object)  # Emits numpy array [x, y, z]
+    insole_point_picked = Signal(object)  # Emits numpy array [x, y, z] for insole surface point
     label_point_picked = Signal(object, object)  # Emits (point, normal) for label placement
     
     def __init__(self, parent=None):
@@ -45,15 +46,24 @@ class VTKMeshViewer(QWidget):
         self.foot_actor: Optional[vtk.vtkActor] = None
         self.insole_actor: Optional[vtk.vtkActor] = None
         
-        # Reference points
+        # Reference points on foot (4 points)
         self.reference_points: List[np.ndarray] = []
-        self.reference_labels = ['Heel', '1st Meta', '5th Meta']
+        self.reference_labels = ['Heel', 'Toe Tip', 'Left Side', 'Right Side']
         self.point_actors: List[vtk.vtkActor] = []
         self.label_actors: List[vtk.vtkActor2D] = []
         
+        # Insole surface reference point (5th point)
+        self.insole_surface_point: Optional[np.ndarray] = None
+        self.insole_surface_actor: Optional[vtk.vtkActor] = None
+        self.insole_surface_label_actor: Optional[vtk.vtkActor2D] = None
+        
         # Picking mode
         self.picking_enabled = False
+        self.insole_picking_enabled = False  # For insole surface point picking
         self.label_picking_enabled = False  # For label placement picking
+        
+        # Current picking target (for tooltip)
+        self._current_pick_target = None
         
         # Label placement marker
         self.label_marker_actor: Optional[vtk.vtkActor] = None
@@ -198,6 +208,26 @@ class VTKMeshViewer(QWidget):
                 
                 # Disable picking mode
                 self.set_label_picking_mode(False)
+            return
+        
+        # Handle insole surface point picking (5th point)
+        if self.insole_picking_enabled and self.insole_mesh is not None:
+            click_pos = self.interactor.GetEventPosition()
+            self.picker.Pick(click_pos[0], click_pos[1], 0, self.renderer)
+            
+            picked_actor = self.picker.GetActor()
+            if picked_actor == self.insole_actor:
+                pick_pos = self.picker.GetPickPosition()
+                point = np.array(pick_pos)
+                
+                # Store and visualize the insole surface point
+                self.set_insole_surface_point(point)
+                
+                # Emit signal
+                self.insole_point_picked.emit(point)
+                
+                # Disable picking mode
+                self.set_insole_picking_mode(False)
             return
         
         if not self.picking_enabled:
@@ -357,11 +387,13 @@ class VTKMeshViewer(QWidget):
         
         if enabled:
             self.setCursor(Qt.CursorShape.CrossCursor)
+            self._current_pick_target = "foot_point"
             # Reduce foot opacity for better point visibility during picking
             if self.foot_actor:
                 self.foot_actor.GetProperty().SetOpacity(0.7)
         else:
             self.setCursor(Qt.CursorShape.ArrowCursor)
+            self._current_pick_target = None
             if self.foot_actor:
                 self.foot_actor.GetProperty().SetOpacity(1.0)
         
@@ -373,10 +405,125 @@ class VTKMeshViewer(QWidget):
         
         if enabled:
             self.setCursor(Qt.CursorShape.CrossCursor)
+            self._current_pick_target = "label"
         else:
             self.setCursor(Qt.CursorShape.ArrowCursor)
+            self._current_pick_target = None
         
         self.render()
+    
+    def set_insole_picking_mode(self, enabled: bool):
+        """Enable or disable insole surface point picking mode."""
+        self.insole_picking_enabled = enabled
+        
+        if enabled:
+            self.setCursor(Qt.CursorShape.CrossCursor)
+            self._current_pick_target = "insole_surface"
+            # Reduce insole opacity for better point visibility
+            if self.insole_actor:
+                self.insole_actor.GetProperty().SetOpacity(0.8)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self._current_pick_target = None
+            if self.insole_actor:
+                self.insole_actor.GetProperty().SetOpacity(1.0)
+        
+        self.render()
+    
+    def set_insole_surface_point(self, point: np.ndarray):
+        """Set the insole surface reference point and add visualization."""
+        self.insole_surface_point = np.array(point)
+        
+        # Remove old markers if they exist
+        if self.insole_surface_actor is not None:
+            self.renderer.RemoveActor(self.insole_surface_actor)
+        if self.insole_surface_label_actor is not None:
+            self.renderer.RemoveActor(self.insole_surface_label_actor)
+        
+        # Create sphere marker (green color for insole point)
+        sphere = vtk.vtkSphereSource()
+        sphere.SetCenter(*point)
+        sphere.SetRadius(3.0)
+        sphere.SetPhiResolution(16)
+        sphere.SetThetaResolution(16)
+        sphere.Update()
+        
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputConnection(sphere.GetOutputPort())
+        
+        self.insole_surface_actor = vtk.vtkActor()
+        self.insole_surface_actor.SetMapper(mapper)
+        self.insole_surface_actor.GetProperty().SetColor(0.2, 0.8, 0.2)  # Green
+        self.renderer.AddActor(self.insole_surface_actor)
+        
+        # Create text label
+        text_actor = vtk.vtkBillboardTextActor3D()
+        text_actor.SetInput("Insole Surface")
+        text_actor.SetPosition(point[0] + 5, point[1] + 5, point[2] + 5)
+        text_actor.GetTextProperty().SetFontSize(14)
+        text_actor.GetTextProperty().SetColor(0.2, 1.0, 0.2)  # Bright green
+        text_actor.GetTextProperty().SetBold(True)
+        text_actor.GetTextProperty().SetShadow(True)
+        
+        self.insole_surface_label_actor = text_actor
+        self.renderer.AddActor(text_actor)
+        
+        self.render()
+    
+    def update_insole_surface_point(self, translation: np.ndarray):
+        """Update the insole surface point position after insole transformation."""
+        if self.insole_surface_point is not None:
+            self.insole_surface_point = self.insole_surface_point + translation
+            
+            # Update marker position
+            if self.insole_surface_actor is not None:
+                # Update sphere position
+                sphere = vtk.vtkSphereSource()
+                sphere.SetCenter(*self.insole_surface_point)
+                sphere.SetRadius(3.0)
+                sphere.SetPhiResolution(16)
+                sphere.SetThetaResolution(16)
+                sphere.Update()
+                
+                mapper = vtk.vtkPolyDataMapper()
+                mapper.SetInputConnection(sphere.GetOutputPort())
+                self.insole_surface_actor.SetMapper(mapper)
+            
+            # Update label position
+            if self.insole_surface_label_actor is not None:
+                pt = self.insole_surface_point
+                self.insole_surface_label_actor.SetPosition(pt[0] + 5, pt[1] + 5, pt[2] + 5)
+            
+            self.render()
+    
+    def clear_insole_surface_point(self):
+        """Clear the insole surface reference point."""
+        self.insole_surface_point = None
+        
+        if self.insole_surface_actor is not None:
+            self.renderer.RemoveActor(self.insole_surface_actor)
+            self.insole_surface_actor = None
+        if self.insole_surface_label_actor is not None:
+            self.renderer.RemoveActor(self.insole_surface_label_actor)
+            self.insole_surface_label_actor = None
+        
+        self.render()
+    
+    def get_current_pick_target(self) -> Optional[str]:
+        """Get the current picking target for tooltip display."""
+        if self.picking_enabled:
+            point_count = len(self.reference_points)
+            if point_count == 0:
+                return "Heel (back center)"
+            elif point_count == 1:
+                return "Toe Tip (front center)"
+            elif point_count == 2:
+                return "Left Side (widest)"
+            elif point_count == 3:
+                return "Right Side (widest)"
+        elif self.insole_picking_enabled:
+            return "Insole Internal Surface"
+        return None
     
     def _get_cell_normal(self, actor: vtk.vtkActor, cell_id: int) -> np.ndarray:
         """Get the normal vector of a specific cell (triangle face)."""

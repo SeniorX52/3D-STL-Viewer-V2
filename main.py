@@ -288,11 +288,14 @@ class MainWindow(QMainWindow):
         ref_layout = QVBoxLayout(ref_group)
         
         ref_info = QLabel(
-            "Place 4 points on the foot:\n"
-            "1. Heel (back center)\n"
-            "2. Toe tip (front center)\n"
-            "3. Left side (widest point)\n"
-            "4. Right side (widest point)"
+            "Place 5 reference points:\n"
+            "On FOOT:\n"
+            "  1. Heel (back center)\n"
+            "  2. Toe tip (front center)\n"
+            "  3. Left side (widest point)\n"
+            "  4. Right side (widest point)\n"
+            "On INSOLE:\n"
+            "  5. Internal surface (top touching foot)"
         )
         ref_info.setStyleSheet("color: #666;")
         ref_layout.addWidget(ref_info)
@@ -310,8 +313,13 @@ class MainWindow(QMainWindow):
         
         ref_layout.addLayout(ref_btn_layout)
         
+        # Current picking target label (shows which point to pick next)
+        self.pick_target_label = QLabel("")
+        self.pick_target_label.setStyleSheet("color: #FF9800; font-weight: bold; font-size: 11px;")
+        ref_layout.addWidget(self.pick_target_label)
+        
         # Point status display
-        self.point_status_label = QLabel("Points: 0/4")
+        self.point_status_label = QLabel("Points: 0/5")
         ref_layout.addWidget(self.point_status_label)
         
         # Calculated dimensions
@@ -358,22 +366,24 @@ class MainWindow(QMainWindow):
         self.scale_x_spin.setSuffix(" mm")
         scale_layout.addWidget(self.scale_x_spin, 3, 1)
         
-        # Y axis: percentage scale
-        scale_layout.addWidget(QLabel("Insole Scale Y:"), 4, 0)
+        # Y axis: absolute mm value (target width)
+        scale_layout.addWidget(QLabel("Insole Width (Y):"), 4, 0)
         self.scale_y_spin = QDoubleSpinBox()
-        self.scale_y_spin.setRange(0.1, 10.0)
-        self.scale_y_spin.setValue(1.0)
-        self.scale_y_spin.setSingleStep(0.05)
-        self.scale_y_spin.setDecimals(3)
+        self.scale_y_spin.setRange(20.0, 300.0)  # 20mm to 300mm
+        self.scale_y_spin.setValue(100.0)  # Default 100mm
+        self.scale_y_spin.setSingleStep(1.0)
+        self.scale_y_spin.setDecimals(1)
+        self.scale_y_spin.setSuffix(" mm")
         scale_layout.addWidget(self.scale_y_spin, 4, 1)
         
-        # Z axis: percentage scale
-        scale_layout.addWidget(QLabel("Insole Scale Z:"), 5, 0)
+        # Z axis: absolute mm value (target height)
+        scale_layout.addWidget(QLabel("Insole Height (Z):"), 5, 0)
         self.scale_z_spin = QDoubleSpinBox()
-        self.scale_z_spin.setRange(0.1, 10.0)
-        self.scale_z_spin.setValue(1.0)
-        self.scale_z_spin.setSingleStep(0.05)
-        self.scale_z_spin.setDecimals(3)
+        self.scale_z_spin.setRange(5.0, 100.0)  # 5mm to 100mm
+        self.scale_z_spin.setValue(30.0)  # Default 30mm
+        self.scale_z_spin.setSingleStep(1.0)
+        self.scale_z_spin.setDecimals(1)
+        self.scale_z_spin.setSuffix(" mm")
         scale_layout.addWidget(self.scale_z_spin, 5, 1)
         
         self.apply_scale_btn = QPushButton("Apply Insole Scale")
@@ -687,8 +697,10 @@ class MainWindow(QMainWindow):
     
     def _connect_signals(self):
         """Connect widget signals to handlers."""
-        # Point picking signal
+        # Point picking signal (foot points)
         self.viewer.point_picked.connect(self._on_point_picked)
+        # Insole surface point picking signal
+        self.viewer.insole_point_picked.connect(self._on_insole_point_picked)
         # Label position picking signal
         self.viewer.label_point_picked.connect(self._on_label_point_picked)
     
@@ -737,11 +749,31 @@ class MainWindow(QMainWindow):
         mesh_copy.vertices += centroid
         
         # Apply translation
-        mesh_copy.vertices += np.array([tx, ty, tz])
+        translation = np.array([tx, ty, tz])
+        mesh_copy.vertices += translation
         
         # Update processor and viewer
         self.processor.insole_mesh = mesh_copy
         self.viewer.set_insole_mesh(mesh_copy)
+        
+        # Update insole surface point position if it exists
+        if self.viewer.insole_surface_point is not None and self.processor.insole_surface_point is not None:
+            # Get original insole surface point (relative to original mesh)
+            original_point = self.processor.insole_surface_point.copy()
+            
+            # Apply same transformation: rotation then translation
+            # First translate to origin (relative to centroid)
+            point_centered = original_point - centroid
+            # Apply rotation
+            point_rotated = rotation[:3, :3] @ point_centered
+            # Translate back and apply slider translation
+            new_point = point_rotated + centroid + translation
+            
+            # Update viewer's insole surface point marker
+            self.viewer.insole_surface_point = new_point
+            if self.viewer.insole_surface_actor is not None:
+                # Recreate the marker at new position
+                self.viewer.set_insole_surface_point(new_point)
     
     def _reset_position_sliders_ui_only(self):
         """Reset all position/rotation sliders to zero (UI only, no mesh update)."""
@@ -766,6 +798,11 @@ class MainWindow(QMainWindow):
         if self.processor.original_insole_mesh is not None:
             self.processor.insole_mesh = self.processor.original_insole_mesh.copy()
             self.viewer.set_insole_mesh(self.processor.insole_mesh)
+            
+            # Reset insole surface point to its original position (stored in processor)
+            if self.processor.insole_surface_point is not None:
+                self.viewer.set_insole_surface_point(self.processor.insole_surface_point)
+            
             self.status_bar.showMessage("Insole position reset")
     
     def _update_ui_state(self):
@@ -773,12 +810,13 @@ class MainWindow(QMainWindow):
         has_foot = self.processor.foot_mesh is not None
         has_insole = self.processor.insole_mesh is not None
         has_points = len(self.processor.reference_points) == 4
+        has_insole_point = self.viewer.insole_surface_point is not None
         
         # Reference points require foot
-        self.start_picking_btn.setEnabled(has_foot)
-        self.clear_points_btn.setEnabled(len(self.viewer.reference_points) > 0)
+        self.start_picking_btn.setEnabled(has_foot or (has_points and has_insole and not has_insole_point))
+        self.clear_points_btn.setEnabled(len(self.viewer.reference_points) > 0 or has_insole_point)
         
-        # Align requires foot, insole, and 3 points
+        # Align requires foot, insole, and 4 foot points (5th point optional but recommended)
         self.align_insole_btn.setEnabled(has_foot and has_insole and has_points)
         
         # Scaling requires insole
@@ -818,12 +856,15 @@ class MainWindow(QMainWindow):
         else:
             self.current_dims_label.setText("X: -- mm  Y: -- mm  Z: -- mm")
         
-        # Update point count
+        # Update point count (4 foot points + 1 insole point = 5 total)
         point_count = len(self.viewer.reference_points)
-        self.point_status_label.setText(f"Points: {point_count}/4")
+        total_points = point_count + (1 if has_insole_point else 0)
+        self.point_status_label.setText(f"Points: {total_points}/5")
         
-        if point_count == 4:
+        if total_points == 5:
             self.point_status_label.setStyleSheet("color: green; font-weight: bold;")
+        elif point_count == 4:
+            self.point_status_label.setStyleSheet("color: #2196F3; font-weight: bold;")  # Blue - foot done, need insole
         else:
             self.point_status_label.setStyleSheet("color: orange;")
         
@@ -1050,11 +1091,11 @@ class MainWindow(QMainWindow):
                 # Reset position sliders
                 self._reset_position_sliders_ui_only()
                 
-                # Update scale spinboxes - X gets current dimension in mm
+                # Update scale spinboxes - all get current dimensions in mm
                 current_dims = self.processor.get_insole_dimensions()
                 self.scale_x_spin.setValue(current_dims[0])
-                self.scale_y_spin.setValue(1.0)
-                self.scale_z_spin.setValue(1.0)
+                self.scale_y_spin.setValue(current_dims[1])
+                self.scale_z_spin.setValue(current_dims[2])
                 
                 # Get insole length for display
                 insole_bounds = mesh.bounds
@@ -1104,11 +1145,11 @@ class MainWindow(QMainWindow):
             
             self.viewer.set_insole_mesh(mesh)
             
-            # Update scale spinboxes - X gets current dimension in mm
+            # Update scale spinboxes - all get current dimensions in mm
             current_dims = self.processor.get_insole_dimensions()
             self.scale_x_spin.setValue(current_dims[0])
-            self.scale_y_spin.setValue(1.0)
-            self.scale_z_spin.setValue(1.0)
+            self.scale_y_spin.setValue(current_dims[1])
+            self.scale_z_spin.setValue(current_dims[2])
             
             # Set isometric view for better 3D visualization
             self.viewer.set_view('iso')
@@ -1141,14 +1182,40 @@ class MainWindow(QMainWindow):
         
         # Enable picking mode
         self.viewer.set_picking_mode(True)
+        self._update_pick_target_label()
         self.status_bar.showMessage("Click on the foot to place reference points (Heel first)")
         
         self.start_picking_btn.setText("Picking... (ESC to cancel)")
         self.start_picking_btn.setStyleSheet("background-color: #FF9800; color: white;")
     
-    def _on_point_picked(self, point):
-        """Handle point picked from viewer."""
+    def _update_pick_target_label(self):
+        """Update the label showing which point to pick next."""
         point_count = len(self.viewer.reference_points)
+        has_insole_point = self.viewer.insole_surface_point is not None
+        
+        if self.viewer.picking_enabled:
+            targets = ["→ Pick: HEEL (back center on foot)",
+                      "→ Pick: TOE TIP (front center on foot)",
+                      "→ Pick: LEFT SIDE (widest point on foot)",
+                      "→ Pick: RIGHT SIDE (widest point on foot)"]
+            if point_count < 4:
+                self.pick_target_label.setText(targets[point_count])
+            else:
+                self.pick_target_label.setText("")
+        elif self.viewer.insole_picking_enabled:
+            self.pick_target_label.setText("→ Pick: INSOLE INTERNAL SURFACE (top face)")
+        elif point_count == 4 and not has_insole_point:
+            self.pick_target_label.setText("Click 'Pick Insole Surface' for 5th point")
+            self.pick_target_label.setStyleSheet("color: #2196F3; font-weight: bold; font-size: 11px;")
+        else:
+            self.pick_target_label.setText("")
+            self.pick_target_label.setStyleSheet("color: #FF9800; font-weight: bold; font-size: 11px;")
+    
+    def _on_point_picked(self, point):
+        """Handle point picked from viewer (foot points)."""
+        point_count = len(self.viewer.reference_points)
+        
+        self._update_pick_target_label()
         
         if point_count == 1:
             self.status_bar.showMessage("Heel placed. Now click on the Toe tip (front center)")
@@ -1157,10 +1224,6 @@ class MainWindow(QMainWindow):
         elif point_count == 3:
             self.status_bar.showMessage("Left side placed. Now click on the Right side (widest point)")
         elif point_count == 4:
-            self.status_bar.showMessage("All 4 reference points placed!")
-            self.start_picking_btn.setText("Start Picking Points")
-            self.start_picking_btn.setStyleSheet("background-color: #4CAF50; color: white;")
-            
             # Set points in processor
             self.processor.set_reference_points(self.viewer.reference_points)
             
@@ -1171,20 +1234,74 @@ class MainWindow(QMainWindow):
                 self.dimensions_label.setStyleSheet("color: green;")
             except Exception as e:
                 self.dimensions_label.setText(f"Error calculating dimensions: {e}")
+            
+            # Check if we have an insole loaded to pick the 5th point
+            if self.processor.insole_mesh is not None:
+                self.status_bar.showMessage("Foot points done! Now click 'Pick Insole Surface' for the 5th point")
+                self.start_picking_btn.setText("Pick Insole Surface")
+                self.start_picking_btn.setStyleSheet("background-color: #2196F3; color: white;")
+                self.start_picking_btn.clicked.disconnect()
+                self.start_picking_btn.clicked.connect(self._start_insole_picking)
+            else:
+                self.status_bar.showMessage("4 foot points placed! Load insole to pick 5th point")
+                self.start_picking_btn.setText("Start Picking Points")
+                self.start_picking_btn.setStyleSheet("background-color: #4CAF50; color: white;")
+            
+            self._update_pick_target_label()
         
         self._update_ui_state()
     
-    def _clear_points(self):
-        """Clear all reference points."""
-        self.viewer.clear_reference_points()
-        self.processor.reference_points = []
-        self.viewer.set_picking_mode(False)
+    def _start_insole_picking(self):
+        """Start picking the insole surface reference point (5th point)."""
+        if self.processor.insole_mesh is None:
+            QMessageBox.warning(self, "Warning", "Please load an insole STL first.")
+            return
         
+        # Enable insole picking mode
+        self.viewer.set_insole_picking_mode(True)
+        self._update_pick_target_label()
+        self.status_bar.showMessage("Click on the INSOLE's internal/top surface (the side that touches the foot)")
+        
+        self.start_picking_btn.setText("Picking Insole... (ESC to cancel)")
+        self.start_picking_btn.setStyleSheet("background-color: #FF9800; color: white;")
+    
+    def _on_insole_point_picked(self, point):
+        """Handle insole surface point picked (5th point)."""
+        self.status_bar.showMessage("All 5 reference points placed! Ready to align.")
+        
+        # Store the insole surface point in processor
+        self.processor.insole_surface_point = np.array(point)
+        
+        # Reset button state
+        self.start_picking_btn.setText("Start Picking Points")
+        self.start_picking_btn.setStyleSheet("background-color: #4CAF50; color: white;")
+        self.start_picking_btn.clicked.disconnect()
+        self.start_picking_btn.clicked.connect(self._start_picking)
+        
+        self._update_pick_target_label()
+        self._update_ui_state()
+    
+    def _clear_points(self):
+        """Clear all reference points including insole surface point."""
+        self.viewer.clear_reference_points()
+        self.viewer.clear_insole_surface_point()
+        self.viewer.set_picking_mode(False)
+        self.viewer.set_insole_picking_mode(False)
+        self.processor.reference_points = []
+        self.processor.insole_surface_point = None
+        
+        # Reset button to initial state
+        try:
+            self.start_picking_btn.clicked.disconnect()
+        except:
+            pass
+        self.start_picking_btn.clicked.connect(self._start_picking)
         self.start_picking_btn.setText("Start Picking Points")
         self.start_picking_btn.setStyleSheet("background-color: #4CAF50; color: white;")
         
         self.dimensions_label.setText("Foot dimensions: --")
         self.dimensions_label.setStyleSheet("")
+        self.pick_target_label.setText("")
         
         self._update_ui_state()
         self.status_bar.showMessage("Reference points cleared")
@@ -1192,19 +1309,36 @@ class MainWindow(QMainWindow):
     def _align_insole(self):
         """Align the insole to the foot using reference points."""
         if len(self.processor.reference_points) != 4:
-            QMessageBox.warning(self, "Warning", "Please set all 4 reference points first.")
+            QMessageBox.warning(self, "Warning", "Please set all 4 foot reference points first.")
             return
         
         if self.processor.insole_mesh is None:
             QMessageBox.warning(self, "Warning", "Please load an insole first.")
             return
         
+        # Check for insole surface point (5th point) - optional but recommended
+        if self.processor.insole_surface_point is None:
+            reply = QMessageBox.question(
+                self, "Missing Insole Surface Point",
+                "The 5th reference point (insole internal surface) is not set.\n\n"
+                "This point helps align the insole's internal surface to touch the foot.\n\n"
+                "Continue without it? (Alignment may be less accurate)",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.No:
+                return
+        
         try:
-            # Align insole to foot (rotates to match heel-toe axis, positions, and links)
+            # Align insole to foot (uses 5th point if available for better Z positioning)
             self.processor.align_insole_to_foot()
             
             # Update viewer
             self.viewer.set_insole_mesh(self.processor.insole_mesh)
+            
+            # Update insole surface point to follow the insole transformation
+            if self.viewer.insole_surface_point is not None and hasattr(self.processor, '_last_insole_translation'):
+                self.viewer.update_insole_surface_point(self.processor._last_insole_translation)
             
             # Reset position sliders since alignment creates new reference position
             self._reset_position_sliders_ui_only()
@@ -1242,16 +1376,15 @@ class MainWindow(QMainWindow):
             self.viewer.set_insole_mesh(self.processor.insole_mesh)
             
             # Update scale spinboxes:
-            # X shows the new length in mm
-            # Y and Z reset to 1.0 since scaling has been applied to the mesh
+            # All axes show the new dimensions in mm
             new_dims = self.processor.get_insole_dimensions()
             self.scale_x_spin.blockSignals(True)
             self.scale_y_spin.blockSignals(True)
             self.scale_z_spin.blockSignals(True)
             
             self.scale_x_spin.setValue(new_dims[0])  # Show length in mm
-            self.scale_y_spin.setValue(1.0)  # Reset - scaling already applied
-            self.scale_z_spin.setValue(1.0)  # Reset - scaling already applied
+            self.scale_y_spin.setValue(new_dims[1])  # Show width in mm
+            self.scale_z_spin.setValue(new_dims[2])  # Show height in mm
             
             self.scale_x_spin.blockSignals(False)
             self.scale_y_spin.blockSignals(False)
@@ -1271,14 +1404,18 @@ class MainWindow(QMainWindow):
             # Get the current insole dimensions BEFORE scaling
             current_dims = self.processor.get_insole_dimensions()
             current_x_mm = current_dims[0]
+            current_y_mm = current_dims[1]
+            current_z_mm = current_dims[2]
             
-            # Get target X in mm and Y/Z as multipliers
+            # Get target dimensions in mm for all axes
             target_x_mm = self.scale_x_spin.value()
-            scale_y = self.scale_y_spin.value()
-            scale_z = self.scale_z_spin.value()
+            target_y_mm = self.scale_y_spin.value()
+            target_z_mm = self.scale_z_spin.value()
             
-            # Calculate X scale factor from mm target
+            # Calculate scale factors from mm targets
             scale_x = target_x_mm / current_x_mm if current_x_mm > 0 else 1.0
+            scale_y = target_y_mm / current_y_mm if current_y_mm > 0 else 1.0
+            scale_z = target_z_mm / current_z_mm if current_z_mm > 0 else 1.0
             
             # Only apply if there's actually a change
             if abs(scale_x - 1.0) > 0.001 or abs(scale_y - 1.0) > 0.001 or abs(scale_z - 1.0) > 0.001:
@@ -1287,22 +1424,20 @@ class MainWindow(QMainWindow):
                 # Update viewer
                 self.viewer.set_insole_mesh(self.processor.insole_mesh)
                 
-                # Update X spinbox to show actual new dimension
+                # Update all spinboxes to show actual new dimensions
                 new_dims = self.processor.get_insole_dimensions()
                 self.scale_x_spin.blockSignals(True)
-                self.scale_x_spin.setValue(new_dims[0])
-                self.scale_x_spin.blockSignals(False)
-                
-                # Reset Y/Z to 1.0 since they've been applied
                 self.scale_y_spin.blockSignals(True)
                 self.scale_z_spin.blockSignals(True)
-                self.scale_y_spin.setValue(1.0)
-                self.scale_z_spin.setValue(1.0)
+                self.scale_x_spin.setValue(new_dims[0])
+                self.scale_y_spin.setValue(new_dims[1])
+                self.scale_z_spin.setValue(new_dims[2])
+                self.scale_x_spin.blockSignals(False)
                 self.scale_y_spin.blockSignals(False)
                 self.scale_z_spin.blockSignals(False)
                 
                 self.status_bar.showMessage(
-                    f"Scaled: Length={new_dims[0]:.1f}mm (position preserved)"
+                    f"Scaled: L={new_dims[0]:.1f}mm W={new_dims[1]:.1f}mm H={new_dims[2]:.1f}mm (position preserved)"
                 )
             else:
                 self.status_bar.showMessage("No scaling change applied")
@@ -1319,11 +1454,11 @@ class MainWindow(QMainWindow):
             if mesh is not None:
                 self.viewer.set_insole_mesh(mesh)
                 
-                # Reset scale spinboxes - X gets current dimension in mm
+                # Reset scale spinboxes - all get current dimensions in mm
                 current_dims = self.processor.get_insole_dimensions()
                 self.scale_x_spin.setValue(current_dims[0])
-                self.scale_y_spin.setValue(1.0)
-                self.scale_z_spin.setValue(1.0)
+                self.scale_y_spin.setValue(current_dims[1])
+                self.scale_z_spin.setValue(current_dims[2])
                 
                 # Reset position sliders
                 self._reset_position_sliders()
