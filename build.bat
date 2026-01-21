@@ -6,7 +6,7 @@ REM This script builds a standalone Windows executable
 REM using PyInstaller. Run from the project root directory.
 REM
 REM Prerequisites:
-REM   - Python 3.10+ installed
+REM   - Python 3.10+ installed (or existing .venv)
 REM   - pip install -r requirements.txt
 REM
 REM The resulting executable requires NO Python or
@@ -19,31 +19,97 @@ echo   3D Insole Adapter - Build Script
 echo ========================================
 echo.
 
-REM Check if Python is available
-python --version >nul 2>&1
-if errorlevel 1 (
-    echo ERROR: Python is not installed or not in PATH
-    echo Please install Python 3.10 or later
-    pause
-    exit /b 1
+REM First check if virtual environment exists and use its Python
+set PYTHON_CMD=
+if exist ".venv\Scripts\python.exe" (
+    set PYTHON_CMD=.venv\Scripts\python.exe
+    echo Found existing virtual environment
+    goto :python_found
+)
+if exist "venv\Scripts\python.exe" (
+    set PYTHON_CMD=venv\Scripts\python.exe
+    echo Found existing virtual environment
+    goto :python_found
 )
 
+REM Check if Python is available in PATH
+python --version >nul 2>&1
+if not errorlevel 1 (
+    set PYTHON_CMD=python
+    goto :python_found
+)
+
+REM Check common Python installation locations
+if exist "C:\Python313\python.exe" (
+    set PYTHON_CMD=C:\Python313\python.exe
+    goto :python_found
+)
+if exist "C:\Python312\python.exe" (
+    set PYTHON_CMD=C:\Python312\python.exe
+    goto :python_found
+)
+if exist "C:\Python311\python.exe" (
+    set PYTHON_CMD=C:\Python311\python.exe
+    goto :python_found
+)
+if exist "C:\Python310\python.exe" (
+    set PYTHON_CMD=C:\Python310\python.exe
+    goto :python_found
+)
+if exist "%LOCALAPPDATA%\Programs\Python\Python313\python.exe" (
+    set PYTHON_CMD=%LOCALAPPDATA%\Programs\Python\Python313\python.exe
+    goto :python_found
+)
+if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" (
+    set PYTHON_CMD=%LOCALAPPDATA%\Programs\Python\Python312\python.exe
+    goto :python_found
+)
+if exist "%LOCALAPPDATA%\Programs\Python\Python311\python.exe" (
+    set PYTHON_CMD=%LOCALAPPDATA%\Programs\Python\Python311\python.exe
+    goto :python_found
+)
+if exist "%LOCALAPPDATA%\Programs\Python\Python310\python.exe" (
+    set PYTHON_CMD=%LOCALAPPDATA%\Programs\Python\Python310\python.exe
+    goto :python_found
+)
+REM Check for Python installed via Microsoft Store / pythoncore
+for /d %%D in ("%LOCALAPPDATA%\Python\pythoncore-*") do (
+    if exist "%%D\python.exe" (
+        set PYTHON_CMD=%%D\python.exe
+        goto :python_found
+    )
+)
+
+REM No Python found
+echo ERROR: Python is not installed or not found
+echo.
+echo Please either:
+echo   1. Create a virtual environment first:
+echo      python -m venv .venv
+echo      .venv\Scripts\activate
+echo      pip install -r requirements.txt
+echo   2. Or install Python 3.10+ and add to PATH
+echo.
+pause
+exit /b 1
+
+:python_found
 echo [1/5] Checking Python version...
-python --version
+%PYTHON_CMD% --version
 
 REM Check for virtual environment
-if exist ".venv" (
+if exist ".venv\Scripts\activate.bat" (
     echo.
     echo [2/5] Activating existing virtual environment...
     call .venv\Scripts\activate.bat
-) else if exist "venv" (
+) else if exist "venv\Scripts\activate.bat" (
     echo.
     echo [2/5] Activating existing virtual environment...
     call venv\Scripts\activate.bat
 ) else (
     echo.
     echo [2/5] Creating virtual environment...
-    python -m venv .venv
+    %PYTHON_CMD% -m venv .venv
     call .venv\Scripts\activate.bat
 )
 

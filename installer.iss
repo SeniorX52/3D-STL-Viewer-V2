@@ -70,6 +70,7 @@ Source: "dist\InsoleAdapter.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Documentation
 Source: "docs\USER_GUIDE.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "docs\TECHNICAL.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "docs\LABEL_METHOD.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Sample models - organized in subfolders
@@ -100,137 +101,6 @@ Root: HKA; Subkey: "Software\Classes\InsoleAdapter.stl\DefaultIcon"; ValueType: 
 Root: HKA; Subkey: "Software\Classes\InsoleAdapter.stl\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
 [Code]
-// Global variable to store uninstall string
-var
-  UninstallString: String;
-  PreviousVersion: String;
-
-// Get the uninstall string for a previous installation
-function GetUninstallString(): String;
-var
-  UninstPath: String;
-  UninstallStr: String;
-begin
-  Result := '';
-  // Check current user installation first
-  UninstPath := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#emit SetupSetting("AppId")}_is1';
-  if RegQueryStringValue(HKCU, UninstPath, 'UninstallString', UninstallStr) then
-    Result := UninstallStr
-  else if RegQueryStringValue(HKLM, UninstPath, 'UninstallString', UninstallStr) then
-    Result := UninstallStr;
-end;
-
-// Get the version of a previous installation
-function GetPreviousVersion(): String;
-var
-  UninstPath: String;
-  VersionStr: String;
-begin
-  Result := '';
-  UninstPath := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#emit SetupSetting("AppId")}_is1';
-  if RegQueryStringValue(HKCU, UninstPath, 'DisplayVersion', VersionStr) then
-    Result := VersionStr
-  else if RegQueryStringValue(HKLM, UninstPath, 'DisplayVersion', VersionStr) then
-    Result := VersionStr;
-end;
-
-// Check if app is currently running
-function IsAppRunning(): Boolean;
-var
-  ResultCode: Integer;
-begin
-  // Use tasklist to check if the app is running
-  Result := Exec('cmd.exe', '/c tasklist /FI "IMAGENAME eq {#MyAppExeName}" | find /i "{#MyAppExeName}"', 
-                 '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
-end;
-
-// Uninstall the previous version
-function UninstallPrevious(): Boolean;
-var
-  ResultCode: Integer;
-  UninstallCmd: String;
-begin
-  Result := True;
-  UninstallCmd := RemoveQuotes(UninstallString);
-  
-  if UninstallCmd <> '' then
-  begin
-    // Run the uninstaller silently
-    if not Exec(UninstallCmd, '/SILENT /NORESTART /SUPPRESSMSGBOXES', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-    begin
-      Result := False;
-    end;
-  end;
-end;
-
-// Check if .NET or Visual C++ redistributable might be needed
-function InitializeSetup(): Boolean;
-var
-  MsgResult: Integer;
-begin
-  Result := True;
-  
-  // Get the uninstall string for any previous installation
-  UninstallString := GetUninstallString();
-  PreviousVersion := GetPreviousVersion();
-  
-  // If a previous version is installed, ask the user what to do
-  if UninstallString <> '' then
-  begin
-    if PreviousVersion <> '' then
-      MsgResult := MsgBox(
-        '{#MyAppName} version ' + PreviousVersion + ' is already installed.' + #13#10 + #13#10 +
-        'Do you want to uninstall the previous version and install version {#MyAppVersion}?' + #13#10 + #13#10 +
-        'Click Yes to uninstall the old version first (recommended).' + #13#10 +
-        'Click No to install over the existing version.' + #13#10 +
-        'Click Cancel to abort the installation.',
-        mbConfirmation, MB_YESNOCANCEL)
-    else
-      MsgResult := MsgBox(
-        'A previous version of {#MyAppName} is already installed.' + #13#10 + #13#10 +
-        'Do you want to uninstall it before installing version {#MyAppVersion}?' + #13#10 + #13#10 +
-        'Click Yes to uninstall the old version first (recommended).' + #13#10 +
-        'Click No to install over the existing version.' + #13#10 +
-        'Click Cancel to abort the installation.',
-        mbConfirmation, MB_YESNOCANCEL);
-    
-    case MsgResult of
-      IDYES:
-        begin
-          // Check if app is running
-          if IsAppRunning() then
-          begin
-            MsgBox('{#MyAppName} is currently running.' + #13#10 + #13#10 +
-                   'Please close the application and try again.',
-                   mbError, MB_OK);
-            Result := False;
-            Exit;
-          end;
-          
-          // Uninstall previous version
-          WizardForm.StatusLabel.Caption := 'Removing previous version...';
-          if not UninstallPrevious() then
-          begin
-            MsgBox('Failed to uninstall the previous version.' + #13#10 +
-                   'Please uninstall it manually from Control Panel and try again.',
-                   mbError, MB_OK);
-            Result := False;
-          end;
-        end;
-      IDNO:
-        begin
-          // Continue with installation over existing version
-          Result := True;
-        end;
-      IDCANCEL:
-        begin
-          // User cancelled
-          Result := False;
-        end;
-    end;
-  end;
-end;
-
 // Custom messages
 procedure InitializeWizard();
 begin

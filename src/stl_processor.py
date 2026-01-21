@@ -94,6 +94,10 @@ class STLProcessor:
         self.insole_mesh: Optional[trimesh.Trimesh] = None
         self.original_insole_mesh: Optional[trimesh.Trimesh] = None
         
+        # Store the TRUE original insole as loaded from file (never modified)
+        # This is used by Reset Insole to restore original size
+        self._loaded_insole_mesh: Optional[trimesh.Trimesh] = None
+        
         # Store the insole before any label is applied
         # This allows us to replace labels by going back to this state
         self._insole_before_label: Optional[trimesh.Trimesh] = None
@@ -152,6 +156,9 @@ class STLProcessor:
             # Store centered mesh as original (so sliders use this as zero point)
             self.original_insole_mesh = self.insole_mesh.copy()
             
+            # Store the TRUE original (never modified by scale/align operations)
+            self._loaded_insole_mesh = self.insole_mesh.copy()
+            
             # Reset label state when loading new insole
             self._insole_before_label = None
             self._current_label = None
@@ -162,9 +169,54 @@ class STLProcessor:
             raise ValueError(f"Failed to load insole STL: {str(e)}")
     
     def reset_insole(self) -> Optional[trimesh.Trimesh]:
-        """Reset insole to original loaded state (after positioning)."""
-        if self.original_insole_mesh is not None:
-            self.insole_mesh = self.original_insole_mesh.copy()
+        """Reset insole to original size while keeping current position.
+        
+        This restores the original scale from when the file was loaded,
+        but maintains the current X/Y/Z position of the insole.
+        """
+        if self._loaded_insole_mesh is None and self.original_insole_mesh is None:
+            return None
+            
+        source_mesh = self._loaded_insole_mesh if self._loaded_insole_mesh is not None else self.original_insole_mesh
+        
+        if self.insole_mesh is not None:
+            # Get current insole center position (to preserve it)
+            current_center = (self.insole_mesh.bounds[0] + self.insole_mesh.bounds[1]) / 2
+            
+            # Restore original mesh
+            self.insole_mesh = source_mesh.copy()
+            
+            # Get the center of the restored mesh
+            restored_center = (self.insole_mesh.bounds[0] + self.insole_mesh.bounds[1]) / 2
+            
+            # Translate to maintain the same position
+            translation = current_center - restored_center
+            self.insole_mesh.vertices += translation
+            
+            # Update the working original to this positioned mesh
+            self.original_insole_mesh = self.insole_mesh.copy()
+            
+            # Reset label state
+            self._insole_before_label = None
+            self._current_label = None
+            self._label_params = None
+            
+            # Update insole surface point position if it exists
+            if self.insole_surface_point is not None:
+                # Recalculate relative to new mesh center
+                new_center = (self.insole_mesh.bounds[0] + self.insole_mesh.bounds[1]) / 2
+                # Position surface point at top center of insole
+                self.insole_surface_point = np.array([
+                    new_center[0],
+                    new_center[1],
+                    self.insole_mesh.bounds[1][2]  # Top of insole
+                ])
+            
+            return self.insole_mesh
+        else:
+            # No current mesh, just restore original
+            self.insole_mesh = source_mesh.copy()
+            self.original_insole_mesh = source_mesh.copy()
             
             # Reset label state
             self._insole_before_label = None
@@ -172,7 +224,6 @@ class STLProcessor:
             self._label_params = None
             
             return self.insole_mesh
-        return None
     
     def set_reference_points(self, points: List[np.ndarray]) -> None:
         """Set reference points on the foot (4 points: heel, toe, left, right)."""
@@ -235,6 +286,12 @@ class STLProcessor:
             # Calculate how far the insole top is from foot sole
             z_offset_from_sole = insole_top_z_before - foot_sole_z
         
+        # Store insole center and surface point relative position BEFORE scaling
+        insole_center_before = (self.insole_mesh.bounds[0] + self.insole_mesh.bounds[1]) / 2
+        surface_point_relative = None
+        if self.insole_surface_point is not None:
+            surface_point_relative = self.insole_surface_point - insole_center_before
+        
         # Store centroid before scaling
         centroid_before = self.insole_mesh.centroid.copy()
         
@@ -254,6 +311,9 @@ class STLProcessor:
         new_centroid = self.insole_mesh.centroid.copy()
         self.insole_mesh.vertices[:, :2] += centroid_before[:2] - new_centroid[:2]
         
+        # Track total Z adjustment for updating insole surface point
+        total_z_adjustment = 0.0
+        
         # For Z: reposition so the insole top maintains same offset from foot sole
         if preserve_foot_alignment:
             insole_top_z_after = self.insole_mesh.bounds[1][2]
@@ -261,21 +321,26 @@ class STLProcessor:
             target_top_z = foot_sole_z + z_offset_from_sole
             z_adjustment = target_top_z - insole_top_z_after
             self.insole_mesh.vertices[:, 2] += z_adjustment
+            total_z_adjustment = z_adjustment
         else:
             # No foot, just preserve centroid Z
-            self.insole_mesh.vertices[:, 2] += centroid_before[2] - self.insole_mesh.centroid[2]
+            z_adjustment = centroid_before[2] - self.insole_mesh.centroid[2]
+            self.insole_mesh.vertices[:, 2] += z_adjustment
+            total_z_adjustment = z_adjustment
         
         # Update original mesh so position sliders use scaled mesh as base
         # This prevents scaling from jumping back when moving the insole
         if self.original_insole_mesh is not None:
             self.original_insole_mesh = self.insole_mesh.copy()
         
-        # Update insole surface point if it exists (scale it proportionally)
-        if self.insole_surface_point is not None:
-            # Scale the surface point relative to old centroid
-            relative_pos = self.insole_surface_point - centroid_before
-            scaled_relative = relative_pos * np.array([scale_x, scale_y, scale_z])
-            self.insole_surface_point = self.insole_mesh.centroid + scaled_relative
+        # Update insole surface point if it exists
+        # Calculate new position based on the new insole center after all transformations
+        if self.insole_surface_point is not None and surface_point_relative is not None:
+            # Get new insole center after scaling and Z adjustment
+            new_insole_center = (self.insole_mesh.bounds[0] + self.insole_mesh.bounds[1]) / 2
+            # Scale the relative position and add to new center
+            scaled_relative = surface_point_relative * np.array([scale_x, scale_y, scale_z])
+            self.insole_surface_point = new_insole_center + scaled_relative
         
         # If we had a label, we need to update the before-label state
         # because scaling should persist through label changes
@@ -300,6 +365,86 @@ class STLProcessor:
         final_scale_z = scale_z if scale_z is not None else 1.0
         
         self.scale_insole(scale_x, scale_y, final_scale_z)
+        
+        return scale_x, scale_y, final_scale_z
+    
+    def auto_scale_insole_to_cover_points(self, scale_z: Optional[float] = None) -> Tuple[float, float, float]:
+        """
+        Scale the insole so it would cover all 4 reference points on the foot.
+        
+        This method ONLY scales the insole, it does NOT move/translate it.
+        Use align_insole_to_foot() to position the insole after scaling.
+        
+        The insole will be scaled so that:
+        - Its X dimension matches the foot length (heel to toe distance)
+        - Its Y dimension matches the foot width (left to right distance)
+        
+        Returns:
+            Tuple of (scale_x, scale_y, scale_z) factors applied
+        """
+        if self.insole_mesh is None:
+            raise ValueError("No insole loaded")
+        if len(self.reference_points) < 4:
+            raise ValueError("Need 4 reference points (heel, toe, left, right)")
+        
+        # Get reference points
+        heel_pt = np.array(self.reference_points[0])
+        toe_pt = np.array(self.reference_points[1])
+        left_pt = np.array(self.reference_points[2])
+        right_pt = np.array(self.reference_points[3])
+        
+        # Calculate actual distances between reference points (not bounding box)
+        # Length is heel-to-toe distance (projected onto XY plane for X dimension)
+        foot_length_x = abs(toe_pt[0] - heel_pt[0])  # X distance from heel to toe
+        foot_length_y = abs(toe_pt[1] - heel_pt[1])  # Y distance from heel to toe
+        
+        # Width is left-to-right distance
+        foot_width_x = abs(right_pt[0] - left_pt[0])  # X distance left to right
+        foot_width_y = abs(right_pt[1] - left_pt[1])  # Y distance left to right
+        
+        # Determine which axis is length and which is width based on larger dimension
+        # Usually heel-to-toe is the longer dimension (length)
+        # and left-to-right is the shorter dimension (width)
+        if foot_length_x > foot_width_y:
+            # Heel-toe is along X, left-right is along Y
+            target_length = foot_length_x
+            target_width = foot_width_y
+        else:
+            # Heel-toe is along Y, left-right is along X
+            target_length = foot_length_y
+            target_width = foot_width_x
+        
+        # Ensure minimum dimensions to avoid zero division
+        target_length = max(target_length, 10.0)  # At least 10mm
+        target_width = max(target_width, 10.0)
+        
+        # Add margin to ensure insole fully covers the reference points
+        # 1.08 = 8% larger than the measured foot dimensions
+        scale_margin = 1.08
+        target_length *= scale_margin
+        target_width *= scale_margin
+        
+        # Get current insole dimensions
+        current_dims = self.get_insole_dimensions()
+        current_length = current_dims[0]  # X dimension
+        current_width = current_dims[1]   # Y dimension
+        
+        # Calculate scale factors
+        scale_x = target_length / current_length if current_length > 0 else 1.0
+        scale_y = target_width / current_width if current_width > 0 else 1.0
+        final_scale_z = scale_z if scale_z is not None else 1.0
+        
+        # Apply scaling ONLY (no translation - align_insole_to_foot does that)
+        self.scale_insole(scale_x, scale_y, final_scale_z)
+        
+        # Update original mesh
+        if self.original_insole_mesh is not None:
+            self.original_insole_mesh = self.insole_mesh.copy()
+        
+        # Update before-label state
+        if self._insole_before_label is not None:
+            self._insole_before_label = self.insole_mesh.copy()
+            self._current_label = None
         
         return scale_x, scale_y, final_scale_z
     
@@ -373,6 +518,18 @@ class STLProcessor:
                     if normal is not None:
                         normal = normal.copy()
                         normal[1] = -normal[1]
+                    # Swap standalone L/R indicator in label text when mirroring in Y (left-right mirror)
+                    # Only swap L or R that represents foot side, not letters within words
+                    if 'text' in saved_label_params and saved_label_params['text']:
+                        import re
+                        text = saved_label_params['text']
+                        # Swap standalone R <-> L (surrounded by spaces, at start/end, or alone)
+                        # Use word boundaries to only match standalone L or R
+                        # First replace R with a placeholder, then L with R, then placeholder with L
+                        text = re.sub(r'\bR\b', '<<<RIGHT>>>', text)
+                        text = re.sub(r'\bL\b', 'R', text)
+                        text = text.replace('<<<RIGHT>>>', 'L')
+                        saved_label_params['text'] = text
                 else:  # z
                     pos[2] = -pos[2]
                     if normal is not None:
@@ -396,7 +553,7 @@ class STLProcessor:
         Align the insole to the foot using 4 foot reference points and optional 5th insole surface point.
         
         The insole is:
-        1. Centered under the foot along the heel-toe axis (X/Y positioning)
+        1. Centered over all 4 reference points (heel, toe, left, right) in X/Y
         2. Positioned so the insole's internal surface (5th point) touches the actual foot sole
         
         No rotation is applied - insole keeps its original orientation.
@@ -425,12 +582,17 @@ class STLProcessor:
             self._insole_before_label = None
             self._current_label = None
         
-        # Get foot reference points
+        # Get all 4 foot reference points
         heel_pt = np.array(self.reference_points[0])
         toe_pt = np.array(self.reference_points[1])
+        left_pt = np.array(self.reference_points[2])
+        right_pt = np.array(self.reference_points[3])
         
-        # Calculate foot center (midpoint between heel and toe) for X/Y positioning
-        foot_center_xy = (heel_pt[:2] + toe_pt[:2]) / 2
+        # Calculate target center position (center of all 4 reference points in X/Y)
+        # This gives better centering than just heel-toe midpoint
+        all_pts = np.array([heel_pt, toe_pt, left_pt, right_pt])
+        target_center_x = np.mean(all_pts[:, 0])
+        target_center_y = np.mean(all_pts[:, 1])
         
         # Get ACTUAL foot sole position - the lowest Z point of the entire foot mesh
         # This is the bottom of the 3D foot model, not just the reference points
@@ -453,10 +615,10 @@ class STLProcessor:
             insole_top_z = insole_bounds[1][2]
             z_translation = foot_sole_z - insole_top_z + 0.1  # Position top at foot sole
         
-        # Calculate full translation (X/Y from reference points, Z from foot sole)
+        # Calculate full translation (X/Y centered over all 4 points, Z from foot sole)
         translation = np.array([
-            foot_center_xy[0] - insole_center[0],
-            foot_center_xy[1] - insole_center[1],
+            target_center_x - insole_center[0],
+            target_center_y - insole_center[1],
             z_translation
         ])
         
@@ -1011,9 +1173,9 @@ class STLProcessor:
                         self._current_label = label_key
                         print("Engrave succeeded with MeshLib")
                     else:
-                        # Fallback: try trimesh engines
+                        # Fallback: try trimesh engines (manifold3d removed due to Windows build issues)
                         print("MeshLib failed, trying trimesh engines...")
-                        engines_to_try = ['manifold', 'blender']
+                        engines_to_try = ['blender']
                         
                         for engine in engines_to_try:
                             try:

@@ -4,7 +4,7 @@ A professional Windows desktop application for adapting orthotic insoles to 3D f
 
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Python](https://img.shields.io/badge/python-3.10+-yellow)
+![Python](https://img.shields.io/badge/python-3.11+-yellow)
 
 **Author:** Mostafa Abdelaziz
 
@@ -23,10 +23,11 @@ A professional Windows desktop application for adapting orthotic insoles to 3D f
 ### Basic Workflow
 
 1. **Load Files** - Import your foot scan and insole template (STL format)
-2. **Place Points** - Mark 3 reference points on the foot
-3. **Scale** - Auto-scale the insole to match foot dimensions
-4. **Label** - Add patient name, side, and date
-5. **Export** - Save the customized insole as STL
+2. **Place Foot Points** - Mark 4 reference points on the foot (heel center, heel back, left/right metatarsals)
+3. **Place Insole Point** - Mark 1 alignment point on the insole's internal surface
+4. **Scale & Align** - Auto-scale the insole to match foot dimensions and align to sole
+5. **Label** - Add patient name, side, and date
+6. **Export** - Save the customized insole as STL
 
 **Full User Guide:** [docs/USER_GUIDE.md](docs/USER_GUIDE.md)
 
@@ -37,8 +38,9 @@ A professional Windows desktop application for adapting orthotic insoles to 3D f
 ### Core Functionality
 - **STL File Support** - Load and save industry-standard STL files
 - **Interactive 3D Viewer** - GPU-accelerated visualization with rotation, pan, zoom
-- **Reference Point System** - Mark heel and metatarsals for accurate measurements
-- **Automatic Scaling** - Scale insoles to match foot length and width
+- **5-Point Reference System** - Mark 4 points on foot (heel center, heel back, left/right metatarsals) + 1 on insole
+- **Automatic Scaling** - Scale insoles to match foot length and width (all dimensions in mm)
+- **Intelligent Alignment** - Insole automatically aligns to the actual foot sole surface
 - **Manual Adjustments** - Fine-tune scale, position, and rotation
 
 ### Advanced Labeling
@@ -92,7 +94,7 @@ A professional Windows desktop application for adapting orthotic insoles to 3D f
 
 ### Prerequisites
 
-- Python 3.10 or later
+- Python 3.11 or later (tested with Python 3.14)
 - Windows 10/11 (for the desktop app)
 - Git (optional)
 
@@ -174,13 +176,14 @@ The installer is created at `installer_output/InsoleAdapter_Setup_1.0.0.exe`
 | Package | Purpose |
 |---------|---------|
 | PySide6 | Qt GUI framework |
-| VTK | 3D visualization |
+| VTK | 3D visualization (9.6+) |
 | trimesh | STL processing |
 | numpy | Numerical computing |
 | scipy | Scientific algorithms |
+| networkx | Graph algorithms (mesh processing) |
 | shapely | 2D geometry |
 | matplotlib | Font rendering |
-| MeshLib | Boolean operations |
+| fonttools | Font file parsing |
 
 ---
 
