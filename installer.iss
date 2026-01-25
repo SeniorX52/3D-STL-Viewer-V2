@@ -76,6 +76,9 @@ Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 ; Logo STL files
 Source: "logos\*"; DestDir: "{app}\logos"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
+; Sample STL models for testing
+Source: "V2-stl\*"; DestDir: "{app}\models"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+
 [Icons]
 ; Start Menu
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
