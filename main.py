@@ -761,7 +761,17 @@ class MainWindow(QMainWindow):
         
         # Settings
         self.settings = QSettings('OrthosisCustomizer', 'OrthosisApp')
-        self.last_directory = self.settings.value('last_directory', '')
+        
+        # Default to models folder in app directory if no last directory saved
+        default_models_dir = os.path.join(get_application_path(), 'models')
+        if not os.path.exists(default_models_dir):
+            default_models_dir = get_application_path()
+        
+        saved_dir = self.settings.value('last_directory', '')
+        if saved_dir and os.path.exists(saved_dir):
+            self.last_directory = saved_dir
+        else:
+            self.last_directory = default_models_dir
         
         # Current file path
         self.orthosis_file_path: Optional[str] = None
