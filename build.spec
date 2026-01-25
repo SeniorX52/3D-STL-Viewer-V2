@@ -1,9 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller Spec File for 3D Insole Adapter
-============================================
+PyInstaller Spec File for Orthosis Customizer
+==============================================
 Creates a standalone Windows executable with all dependencies bundled.
-No Python, Blender, or development environment required to run.
+No Python or development environment required to run.
 
 Build with: pyinstaller build.spec --clean
 """
@@ -19,6 +19,18 @@ trimesh_datas, trimesh_binaries, trimesh_hiddenimports = collect_all('trimesh')
 shapely_datas, shapely_binaries, shapely_hiddenimports = collect_all('shapely')
 vtk_datas, vtk_binaries, vtk_hiddenimports = collect_all('vtk')
 matplotlib_datas = collect_data_files('matplotlib')
+
+# Collect OpenCV
+try:
+    cv2_datas, cv2_binaries, cv2_hiddenimports = collect_all('cv2')
+except:
+    cv2_datas, cv2_binaries, cv2_hiddenimports = [], [], []
+
+# Collect Pillow
+try:
+    pil_datas, pil_binaries, pil_hiddenimports = collect_all('PIL')
+except:
+    pil_datas, pil_binaries, pil_hiddenimports = [], [], []
 
 # Try to collect MeshLib if available
 try:
@@ -38,6 +50,8 @@ a = Analysis(
     binaries=[
         *vtk_binaries,
         *shapely_binaries,
+        *cv2_binaries,
+        *pil_binaries,
         *meshlib_binaries,
         *manifold_binaries,
     ],
@@ -48,8 +62,12 @@ a = Analysis(
         *matplotlib_datas,
         *meshlib_datas,
         *manifold_datas,
+        *cv2_datas,
+        *pil_datas,
         # Include documentation
         ('docs', 'docs'),
+        # Include logos directory
+        ('logos', 'logos'),
     ],
     hiddenimports=[
         # Trimesh and dependencies
@@ -113,7 +131,10 @@ a = Analysis(
         *meshlib_hiddenimports,
         *manifold_hiddenimports,
         
-        # Misc
+        # Image processing for logo extraction
+        *cv2_hiddenimports,
+        'cv2',
+        *pil_hiddenimports,
         'PIL',
         'PIL.Image',
     ],
@@ -145,7 +166,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='InsoleAdapter',
+    name='OrthosisCustomizer',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -1,6 +1,6 @@
 @echo off
 REM ============================================
-REM Build Script for 3D Insole Adapter
+REM Build Script for Orthosis Customizer
 REM ============================================
 REM This script builds a standalone Windows executable
 REM using PyInstaller. Run from the project root directory.
@@ -15,7 +15,7 @@ REM ============================================
 
 echo.
 echo ========================================
-echo   3D Insole Adapter - Build Script
+echo   Orthosis Customizer - Build Script
 echo ========================================
 echo.
 
@@ -133,12 +133,12 @@ REM Build using spec file (more control)
 pyinstaller build.spec --clean
 
 echo.
-if exist "dist\InsoleAdapter.exe" (
+if exist "dist\OrthosisCustomizer.exe" (
     echo ========================================
     echo   BUILD SUCCESSFUL!
     echo ========================================
     echo.
-    echo Executable created: dist\InsoleAdapter.exe
+    echo Executable created: dist\OrthosisCustomizer.exe
     echo.
     echo The executable is fully standalone:
     echo   - No Python required
@@ -152,13 +152,13 @@ if exist "dist\InsoleAdapter.exe" (
         echo [5/5] Creating Windows installer...
         "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
         
-        if exist "installer_output\InsoleAdapter_Setup_1.0.0.exe" (
+        if exist "installer_output\OrthosisCustomizer_Setup_2.0.0.exe" (
             echo.
             echo ========================================
             echo   INSTALLER CREATED!
             echo ========================================
             echo.
-            echo Installer: installer_output\InsoleAdapter_Setup_1.0.0.exe
+            echo Installer: installer_output\OrthosisCustomizer_Setup_2.0.0.exe
             echo.
             echo This installer can be distributed to end users.
             echo.
@@ -178,8 +178,8 @@ if exist "dist\InsoleAdapter.exe" (
     )
     
     echo Distribution options:
-    echo   1. dist\InsoleAdapter.exe - Single portable executable
-    echo   2. installer_output\InsoleAdapter_Setup_*.exe - Windows installer
+    echo   1. dist\OrthosisCustomizer.exe - Single portable executable
+    echo   2. installer_output\OrthosisCustomizer_Setup_*.exe - Windows installer
     echo.
 ) else (
     echo ========================================

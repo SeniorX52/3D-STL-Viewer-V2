@@ -1,4 +1,4 @@
-# 3D STL Insole Adapter - Dependencies
+# Orthosis Customizer - Dependencies
 # Install with: pip install -r requirements.txt
 
 PySide6>=6.5.0          # Qt GUI framework (LGPL license)
@@ -10,7 +10,8 @@ shapely>=2.0.0          # Geometric operations
 rtree>=1.0.0            # Spatial indexing for trimesh ray operations
 vtk>=9.2.0              # VTK for GPU-accelerated 3D rendering
 mapbox-earcut>=2.0.0    # Polygon triangulation for text extrusion
-# manifold3d removed - has build issues on Windows, use MeshLib or blender engine instead
 matplotlib>=3.5.0       # For font-based text mesh generation
 fonttools>=4.0.0        # Font file processing
+opencv-python>=4.8.0    # Image processing for logo extraction
+Pillow>=10.0.0          # Image loading (PNG/JPG)
 pyinstaller>=6.0.0      # For building standalone .exe

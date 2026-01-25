@@ -1,11 +1,12 @@
 """
-3D STL Insole Adapter - Source Package
-======================================
-Contains modules for STL processing and 3D visualization.
+Orthosis Customizer - Source Package
+=====================================
+Contains modules for orthosis STL processing, dual mesh viewing,
+logo/text engraving, and automatic L/R mirroring.
 """
 
-from src.stl_processor import STLProcessor
-from src.mesh_viewer import SimpleMeshViewer
+from src.orthosis_processor import OrthosisProcessor
+from src.dual_mesh_viewer import DualMeshViewer
 
-__all__ = ['STLProcessor', 'SimpleMeshViewer']
+__all__ = ['OrthosisProcessor', 'DualMeshViewer']
 __version__ = '1.0.0'

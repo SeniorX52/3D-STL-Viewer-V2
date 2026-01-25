@@ -1,6 +1,6 @@
-# 3D Insole Adapter
+# Orthosis Customizer
 
-A professional Windows desktop application for adapting orthotic insoles to 3D foot scans. Create custom-fitted insoles with automatic scaling, text labels, and curved surface engraving.
+A professional Windows desktop application for customizing orthosis STL files with logo and text engraving. Automatically generates left and right versions with patient information.
 
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -14,22 +14,23 @@ A professional Windows desktop application for adapting orthotic insoles to 3D f
 
 ### Installation
 
-1. **Download** `InsoleAdapter_Setup.exe` from the [Releases](releases) page
+1. **Download** `OrthosisCustomizer_Setup.exe` from the [Releases](releases) page
 2. **Run** the installer and follow the prompts
 3. **Launch** from the Start Menu or Desktop shortcut
 
-**That's it!** No Python, Blender, or other software required.
+**That's it!** No Python or other software required.
 
 ### Basic Workflow
 
-1. **Load Files** - Import your foot scan and insole template (STL format)
-2. **Place Foot Points** - Mark 4 reference points on the foot (heel center, heel back, left/right metatarsals)
-3. **Place Insole Point** - Mark 1 alignment point on the insole's internal surface
-4. **Scale & Align** - Auto-scale the insole to match foot dimensions and align to sole
-5. **Label** - Add patient name, side, and date
-6. **Export** - Save the customized insole as STL
-
-**Full User Guide:** [docs/USER_GUIDE.md](docs/USER_GUIDE.md)
+1. **Load Orthosis** - Import your orthosis STL file (File → Open or drag & drop)
+2. **Select Logo** - Choose between Logo V1 or V2
+3. **Pick Logo Position** - Click "Pick Logo Position" then click on the RIGHT orthosis
+4. **Adjust Logo** - Use sliders for offset, rotation, scale, and depth
+5. **Apply Logo** - Click "Apply Logo" to engrave
+6. **Enter Patient Info** - Fill in patient name (date auto-fills)
+7. **Pick Text Position** - Click "Pick Text Position" then click on the RIGHT orthosis
+8. **Apply Text** - Click "Apply Text" to engrave patient info
+9. **Export** - File → Export Both to save `PatientName_Date_L.stl` and `PatientName_Date_R.stl`
 
 ---
 
@@ -37,21 +38,49 @@ A professional Windows desktop application for adapting orthotic insoles to 3D f
 
 ### Core Functionality
 - **STL File Support** - Load and save industry-standard STL files
-- **Interactive 3D Viewer** - GPU-accelerated visualization with rotation, pan, zoom
-- **5-Point Reference System** - Mark 4 points on foot (heel center, heel back, left/right metatarsals) + 1 on insole
-- **Automatic Scaling** - Scale insoles to match foot length and width (all dimensions in mm)
-- **Intelligent Alignment** - Insole automatically aligns to the actual foot sole surface
-- **Manual Adjustments** - Fine-tune scale, position, and rotation
+- **Dual Viewport Display** - View LEFT (mirrored) and RIGHT (original) versions side-by-side
+- **Automatic Mirroring** - Load once, get both L and R versions automatically
+- **GPU-Accelerated 3D Viewer** - Smooth rotation, pan, and zoom with VTK
+- **Camera Synchronization** - Both viewports move together
+- **Settings Persistence** - All settings are saved and restored between sessions
 
-### Advanced Labeling
-- **Surface-Conforming Text** - Labels wrap around curved surfaces (sides of insole)
-- **Emboss or Engrave** - Raised or cut-in text
-- **Custom Positioning** - Click anywhere on the insole to place labels
-- **Adjustable Parameters** - Font size, depth, rotation, offset
-- **Mirror Options** - Flip labels horizontally or vertically if needed
+### Logo Engraving
+- **PNG Logo Support** - Load logos from PNG images (dark regions become engravings)
+- **Two Logo Versions** - Switch between logo_v1 and logo_v2
+- **Point-and-Click Placement** - Click directly on the mesh surface
+- **Adjustable Parameters**:
+  - Offset X/Y (position fine-tuning)
+  - Rotation (-180° to +180°)
+  - Scale (10% to 300%)
+  - Depth (0.1mm to 3.0mm)
+- **Horizontal Orientation** - Logo always stays level/horizontal
+- **Internal Features** - Properly handles holes in letters (a, e, R, etc.)
 
-### Export Options
-- **Auto-Generated Filenames** - `PatientName_L_2026-01-11_insole.stl`
+### Text Engraving
+- **Patient Name** - Multi-line text support
+- **Auto Date** - Defaults to current date (YYYY-MM-DD format)
+- **Adjustable Parameters**:
+  - Offset X/Y
+  - Rotation
+  - Font size
+- **Clean Rendering** - Uses matplotlib fonts with proper curves
+
+### Settings Menu (Settings → Preferences)
+- **Rendering Tab**: MSAA, FXAA, SSAO, mesh colors, lighting, materials
+- **Engraving Tab**: Default depth, surface samples
+- **Logo Tab**: Default size, simplification tolerance
+- **Export Tab**: File format, naming pattern
+- **Display Tab**: Show/hide labels, axes, camera options
+
+### View Modes
+- **Solid** - Standard surface rendering
+- **Wireframe** - See mesh structure
+- **Points** - Point cloud view
+- **Solid + Edges** - Surface with edge lines
+
+### Export
+- **Dual File Export** - Exports both L and R versions in one click
+- **Automatic Naming** - `PatientName_Date_L.stl` and `PatientName_Date_R.stl`
 - **Standard STL Format** - Compatible with all 3D printers and slicers
 
 ---
@@ -59,202 +88,159 @@ A professional Windows desktop application for adapting orthotic insoles to 3D f
 ## Interface Overview
 
 ```
-┌──────────────────────┬────────────────────────────────────────┐
-│   CONTROL PANEL      │              3D VIEWER                 │
-│                      │                                        │
-│  ┌─ File Loading ──┐ │     ┌─────────────────────────┐       │
-│  │ Load Foot       │ │     │                         │       │
-│  │ Load Insole     │ │     │    [3D foot model]      │       │
-│  └─────────────────┘ │     │    [3D insole model]    │       │
-│                      │     │                         │       │
-│  ┌─ Reference ─────┐ │     │    Rotate: Left-drag    │       │
-│  │ Pick Points     │ │     │    Pan: Right-drag      │       │
-│  └─────────────────┘ │     │    Zoom: Scroll         │       │
-│                      │     └─────────────────────────┘       │
-│  ┌─ Scaling ───────┐ │                                        │
-│  │ Auto Scale      │ │     ┌───┐                              │
-│  │ Manual X/Y/Z    │ │     │XYZ│ Axes indicator               │
-│  └─────────────────┘ │     └───┘                              │
-│                      │                                        │
-│  ┌─ Text Label ────┐ │                                        │
-│  │ Name: [______]  │ │                                        │
-│  │ Side: [L/R]     │ │                                        │
-│  │ Apply Label     │ │                                        │
-│  └─────────────────┘ │                                        │
-│                      │                                        │
-│  ┌─ Export ────────┐ │                                        │
-│  │ Export STL      │ │                                        │
-│  └─────────────────┘ │                                        │
-└──────────────────────┴────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│  File   View   Settings   Help                                          │
+├──────────────────────┬───────────────────────┬─────────────────────────┤
+│   CONTROL PANEL      │   LEFT VIEWPORT       │   RIGHT VIEWPORT        │
+│                      │   (Mirrored - L)      │   (Original - R)        │
+│  ┌─ Load ──────────┐ │                       │                         │
+│  │ Open Orthosis   │ │                       │   Click here to pick    │
+│  │ Open Folder     │ │                       │   logo/text positions   │
+│  └─────────────────┘ │                       │                         │
+│                      │   [3D Mesh View]      │   [3D Mesh View]        │
+│  ┌─ Logo ──────────┐ │                       │                         │
+│  │ ○V1  ○V2        │ │   Cameras move        │   Cameras move          │
+│  │ Pick Position   │ │   together            │   together              │
+│  │ Offset X [===]  │ │                       │                         │
+│  │ Offset Y [===]  │ │                       │                         │
+│  │ Rotation [===]  │ │                       │                         │
+│  │ Scale    [===]  │ │                       │                         │
+│  │ Depth    [===]  │ │                       │                         │
+│  │ [Apply Logo]    │ │                       │                         │
+│  └─────────────────┘ │                       │                         │
+│                      │                       │                         │
+│  ┌─ Patient Info ──┐ │                       │                         │
+│  │ Name: [______]  │ │                       │                         │
+│  │ Date: [______]  │ │                       │                         │
+│  │ Pick Position   │ │                       │                         │
+│  │ Offset X [===]  │ │                       │                         │
+│  │ Rotation [===]  │ │                       │                         │
+│  │ Font Size[===]  │ │                       │                         │
+│  │ [Apply Text]    │ │                       │                         │
+│  └─────────────────┘ │                       │                         │
+│                      │                       │                         │
+│  [Reset All]         │                       │                         │
+└──────────────────────┴───────────────────────┴─────────────────────────┘
 ```
+
+---
+
+## Technical Specifications
+
+| Feature | Specification |
+|---------|---------------|
+| Engraving Depth | Adjustable (default 0.6mm) |
+| Export Format | Binary STL |
+| Logo Files | logos/logo_v1.png, logos/logo_v2.png |
+| Mirror Axis | Y-axis |
+| Boolean Engine | MeshLib |
+| Rendering | VTK with OpenGL |
 
 ---
 
 ## For Developers
 
-### Prerequisites
+### Requirements
 
-- Python 3.11 or later (tested with Python 3.14)
-- Windows 10/11 (for the desktop app)
-- Git (optional)
+```
+Python 3.11+
+PySide6>=6.5.0
+VTK>=9.2.0
+trimesh>=4.0.0
+numpy>=1.24.0
+meshlib>=2.0.0
+matplotlib>=3.7.0
+shapely>=2.0.0
+scipy>=1.10.0
+opencv-python>=4.8.0
+Pillow>=10.0.0
+```
 
-### Setup Development Environment
+### Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-repo/3d-insole-adapter.git
-cd 3d-insole-adapter
+# Clone repository
+git clone https://github.com/yourusername/orthosis-customizer.git
+cd orthosis-customizer
 
 # Create virtual environment
 python -m venv .venv
-
-# Activate (Windows)
-.venv\Scripts\activate
+.venv\Scripts\activate  # Windows
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Run the application
+# Run application
 python main.py
+```
+
+### Building Executable
+
+```bash
+# Build with PyInstaller
+pyinstaller build.spec --clean
+
+# Create installer (requires Inno Setup)
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 ```
 
 ### Project Structure
 
 ```
-3D-STL-Viewer/
-├── main.py                 # Application entry point
-├── requirements.txt        # Python dependencies
-├── build.spec             # PyInstaller configuration
-├── build.bat              # Build script
-├── installer.iss          # Inno Setup installer script
-│
+orthosis-customizer/
+├── main.py                    # Application entry point & UI
 ├── src/
-│   ├── stl_processor.py   # Mesh processing engine
-│   └── mesh_viewer.py     # VTK 3D viewer widget
-│
+│   ├── __init__.py
+│   ├── orthosis_processor.py  # Mesh processing (load, mirror, engrave)
+│   └── dual_mesh_viewer.py    # VTK dual-viewport viewer
+├── logos/
+│   ├── logo_v1.png            # First logo option
+│   └── logo_v2.png            # Second logo option
 ├── docs/
-│   ├── USER_GUIDE.md      # End-user documentation
-│   ├── TECHNICAL.md       # Developer documentation
-│   └── LABEL_METHOD.md    # Text label implementation
-│
-└── models/                # Sample STL files
-    ├── foot/
-    └── insole/
+│   ├── USER_GUIDE.md
+│   ├── TECHNICAL.md
+│   └── LABEL_METHOD.md
+├── icon.ico                   # Application icon
+├── icon.png                   # Application icon (PNG)
+├── build.spec                 # PyInstaller configuration
+├── build.bat                  # Build script
+├── installer.iss              # Inno Setup installer script
+├── requirements.txt           # Python dependencies
+└── README.md
 ```
-
-### Building the Executable
-
-```bash
-# Option 1: Use the build script (recommended)
-build.bat
-
-# Option 2: Manual PyInstaller
-pip install pyinstaller
-pyinstaller build.spec --clean
-```
-
-The executable is created at `dist/InsoleAdapter.exe`
-
-### Creating the Windows Installer
-
-1. Install [Inno Setup 6](https://jrsoftware.org/isdl.php)
-2. Build the executable first using `build.bat`
-3. Compile the installer:
-
-```bash
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
-```
-
-The installer is created at `installer_output/InsoleAdapter_Setup_1.0.0.exe`
-
-**Full Technical Docs:** [docs/TECHNICAL.md](docs/TECHNICAL.md)
-
----
-
-## Dependencies
-
-| Package | Purpose |
-|---------|---------|
-| PySide6 | Qt GUI framework |
-| VTK | 3D visualization (9.6+) |
-| trimesh | STL processing |
-| numpy | Numerical computing |
-| scipy | Scientific algorithms |
-| networkx | Graph algorithms (mesh processing) |
-| shapely | 2D geometry |
-| matplotlib | Font rendering |
-| fonttools | Font file parsing |
-
----
-
-## Building a Distributable Package
-
-### What End Users Get
-The final installer includes everything needed:
-- No Python installation required
-- No Blender required  
-- No development environment needed
-- Single installer file
-- Runs immediately after installation
-
-### Build Steps
-
-1. **Install build tools:**
-   ```bash
-   pip install pyinstaller
-   ```
-
-2. **Build executable:**
-   ```bash
-   pyinstaller build.spec --clean
-   ```
-   Or simply run `build.bat`
-
-3. **Create installer (optional but recommended):**
-   - Install [Inno Setup 6](https://jrsoftware.org/isdl.php)
-   - Run: `"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss`
-
-4. **Distribute:**
-   - **Single EXE:** `dist/InsoleAdapter.exe` (portable, ~150-300MB)
-   - **Installer:** `installer_output/InsoleAdapter_Setup_1.0.0.exe` (recommended for end users)
-
----
-
-## Keyboard Shortcuts
-
-| Key | Action |
-|-----|--------|
-| R | Reset view |
-| T | Top view |
-| F | Front view |
-| I | Isometric view |
-| P | Toggle settings panel |
-| 1 | Wireframe mode |
-| 2 | Solid mode |
-| 3 | Points mode |
-| Ctrl+O | Open foot STL |
-| Ctrl+I | Open insole STL |
-| Ctrl+E | Export insole |
 
 ---
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) for details.
+MIT License - See LICENSE file for details.
 
 ---
 
-## Acknowledgments
+## Changelog
 
-- [trimesh](https://trimsh.org/) - Mesh processing library
-- [VTK](https://vtk.org/) - Visualization toolkit
-- [PySide6](https://www.qt.io/) - Qt for Python
-- [MeshLib](https://github.com/MeshInspector/MeshLib) - Boolean operations
+### Version 2.0.0
+- Complete UI redesign with separate logo and text controls
+- Added comprehensive Settings dialog with 5 tabs
+- PNG logo support (replaces STL logos)
+- Adjustable engraving parameters (offset, rotation, scale, depth)
+- Proper internal feature handling (holes in letters)
+- Consistent engraving depth on curved surfaces
+- Settings persistence between sessions
+- Improved rendering quality options
+- Fixed logo/text orientation issues
+
+### Version 1.0.0
+- Initial release
+- Dual viewport display (LEFT | RIGHT)
+- Automatic L/R mirroring
+- Logo selection and placement
+- Text engraving (patient name + date)
+- 0.6mm fixed engraving depth
+- Dual STL export
 
 ---
 
 ## Support
 
-- **User Guide:** [docs/USER_GUIDE.md](docs/USER_GUIDE.md)
-- **Technical Docs:** [docs/TECHNICAL.md](docs/TECHNICAL.md)
-- **Issues:** Create an issue on GitHub
+For issues or feature requests, please open a GitHub issue.
