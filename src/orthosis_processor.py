@@ -1061,13 +1061,12 @@ class OrthosisProcessor:
         """
         Position a flat mesh (logo/text) for engraving on a curved surface.
         
-        SIMPLIFIED VERSION: Instead of warping the mesh to follow surface curvature,
-        we position the flat cutting tool perpendicular to the surface normal.
+        SIMPLIFIED VERSION: Position the flat cutting tool perpendicular to the surface.
         This creates clean, flat-bottomed engravings without mesh corruption.
         
         The cutting tool extends:
-        - Inward: by 'depth' mm (the visible engraving depth)
-        - Outward: by 100mm (to ensure clean boolean cuts through any surface curvature)
+        - Inward: by 'depth' mm (the visible engraving depth)  
+        - Outward: by 10mm (enough to cut through surface curvature)
         
         Args:
             flat_mesh: Flat mesh (in XY plane, extruded in Z)
@@ -1086,6 +1085,7 @@ class OrthosisProcessor:
         mesh_depth_orig = bounds[1][2] - bounds[0][2]
         
         print(f"Mesh dimensions: width={mesh_width:.1f}, height={mesh_height:.1f}, depth={mesh_depth_orig:.1f}")
+        print(f"Engraving depth requested: {depth:.2f}mm")
         
         # Normalize the surface normal (points outward from surface)
         normal = surface_normal / np.linalg.norm(surface_normal)
@@ -1109,51 +1109,53 @@ class OrthosisProcessor:
         cross_check = np.cross(mesh_right, mesh_up)
         is_mirrored = np.dot(cross_check, normal) < 0
         
-        # Create rotation matrix to orient the flat mesh
-        # Original mesh: X = width, Y = height, Z = depth (extrusion)
-        # Target: X -> mesh_right, Y -> mesh_up, Z -> -normal (into surface)
-        rotation_matrix = np.eye(4)
-        rotation_matrix[:3, 0] = mesh_right      # X axis -> mesh_right
-        rotation_matrix[:3, 1] = mesh_up         # Y axis -> mesh_up  
-        rotation_matrix[:3, 2] = -normal         # Z axis -> into surface
+        # Get original mesh bounds for mapping
+        x_min, x_max = bounds[0][0], bounds[1][0]
+        y_min, y_max = bounds[0][1], bounds[1][1]
+        z_min, z_max = bounds[0][2], bounds[1][2]
         
-        # Center the mesh at origin first
+        x_center = (x_min + x_max) / 2
+        y_center = (y_min + y_max) / 2
+        z_range = z_max - z_min if z_max > z_min else 1.0
+        
+        # Transform each vertex
+        # Original: X = width, Y = height, Z = extrusion depth
+        # Target: map to 3D position using mesh_right, mesh_up, and normal
         vertices = flat_mesh.vertices.copy()
-        mesh_center = (bounds[0] + bounds[1]) / 2
-        vertices -= mesh_center
+        new_vertices = np.zeros_like(vertices)
         
-        # Apply rotation
-        vertices_rotated = vertices @ rotation_matrix[:3, :3].T
+        # The cutting tool should:
+        # - z_min (bottom of extrusion) -> depth mm INTO the surface (negative normal direction)
+        # - z_max (top of extrusion) -> 10mm OUTSIDE the surface (positive normal direction)
+        # This creates a cutting tool that extends from -depth to +10mm along the normal
         
-        # Scale Z to create proper cutting tool:
-        # Original Z range maps to: surface + depth (inside) to surface - 100mm (outside)
-        z_min_orig = bounds[0][2] - mesh_center[2]
-        z_max_orig = bounds[1][2] - mesh_center[2]
-        z_range_orig = z_max_orig - z_min_orig if z_max_orig > z_min_orig else 1.0
+        outward_extension = 10.0  # mm outside surface (enough for clean cuts)
         
-        # New Z range: from +depth (into surface) to -100mm (outside surface)
-        # z=0 in original -> on surface
-        # z=z_min_orig -> deepest point (goes INTO surface by depth)
-        # z=z_max_orig -> outer point (goes OUTSIDE surface by 100mm)
-        for i in range(len(vertices_rotated)):
-            # Get original z position (before rotation)
+        for i in range(len(vertices)):
+            # Get position in original flat mesh
+            x_orig = vertices[i, 0]
+            y_orig = vertices[i, 1]
             z_orig = vertices[i, 2]
-            z_normalized = (z_orig - z_min_orig) / z_range_orig  # 0 to 1
             
-            # Map to new range: depth (inside) to -100mm (outside)
-            # z_normalized=0 -> +depth (deepest into surface)
-            # z_normalized=1 -> -100mm (far outside)
-            new_z = depth - z_normalized * (depth + 100.0)
+            # Map X, Y to mesh_right and mesh_up directions (centered)
+            x_offset = x_orig - x_center
+            y_offset = y_orig - y_center
             
-            # Apply this as offset along the normal direction
-            # The rotated vertex already has the right XY position
-            # We just need to adjust its position along the normal
-            vertices_rotated[i] = vertices_rotated[i] + normal * new_z
+            # Map Z to depth along normal
+            # z_min -> -depth (into surface)
+            # z_max -> +outward_extension (outside surface)
+            z_normalized = (z_orig - z_min) / z_range  # 0 to 1
+            z_offset = -depth + z_normalized * (depth + outward_extension)
+            
+            # Compute final 3D position
+            new_vertices[i] = (
+                center_pos + 
+                mesh_right * x_offset + 
+                mesh_up * y_offset + 
+                normal * z_offset
+            )
         
-        # Translate to center position
-        vertices_final = vertices_rotated + center_pos
-        
-        flat_mesh.vertices = vertices_final
+        flat_mesh.vertices = new_vertices
         
         # If the coordinate frame is mirrored, flip face winding
         if is_mirrored:
