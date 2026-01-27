@@ -1061,11 +1061,8 @@ class OrthosisProcessor:
         """
         Wrap/conform a flat mesh (logo/text) to follow the curved surface.
         
-        This method:
-        1. Orients the mesh to face outward from the surface (using surface normal)
-        2. Samples the surface along the mesh width to find the curvature
-        3. Deforms each vertex to follow the surface curvature
-        4. Creates proper depth for engraving
+        OPTIMIZED VERSION: Uses batch ray casting and simplified coordinate mapping
+        to avoid distortion on curved surfaces.
         
         Args:
             flat_mesh: Flat mesh (in XY plane, extruded in Z)
@@ -1090,84 +1087,77 @@ class OrthosisProcessor:
         
         # Determine coordinate frame for placement
         # Logo should ALWAYS be STRICTLY HORIZONTAL - parallel to XY plane
-        # mesh_right = direction the logo text flows (horizontal, in XY plane)
-        # mesh_up = direction perpendicular to text (strictly Z-up)
-        
-        # FORCE mesh_up to be world Z axis (strictly horizontal logo)
         world_up = np.array([0.0, 0.0, 1.0])
         mesh_up = world_up.copy()
         
         # mesh_right is perpendicular to both normal and mesh_up
-        # This ensures the logo flows horizontally along the surface
         mesh_right = np.cross(mesh_up, normal)
         if np.linalg.norm(mesh_right) < 0.001:
-            # Normal is parallel to Z (top/bottom surface), use world X
             mesh_right = np.array([1.0, 0.0, 0.0])
         else:
             mesh_right = mesh_right / np.linalg.norm(mesh_right)
         
         # FLIP mesh_right to make text read LEFT-TO-RIGHT when viewed from outside
-        # cross(Z, normal) gives a direction, but we need the opposite for correct text flow
         mesh_right = -mesh_right
         
         # Check if the coordinate frame creates a left-handed system (mirrored)
-        # This happens on the left side of the orthosis where the normal is mirrored
         cross_check = np.cross(mesh_right, mesh_up)
         is_mirrored = np.dot(cross_check, normal) < 0
         
         print(f"Coordinate frame: normal={normal}, mesh_right={mesh_right}, mesh_up={mesh_up}, mirrored={is_mirrored}")
         
-        # Sample surface points in a 2D GRID to capture curvature in BOTH directions
-        num_samples_x = 20  # Samples along width
-        num_samples_y = 15  # Samples along height
+        # OPTIMIZED: Use fewer samples with batch ray casting
+        num_samples_x = 12  # Reduced from 20
+        num_samples_y = 8   # Reduced from 15
         
-        # Create 2D grid of samples [y][x]
-        sample_grid_positions = []
-        sample_grid_normals = []
+        # Create sample grid points in BATCH for efficient ray casting
+        sample_origins = []
+        sample_params = []  # Store (i, j) for each sample
         
         for j in range(num_samples_y):
-            row_positions = []
-            row_normals = []
-            
-            # Sample from -0.5 to 0.5 of mesh height (centered)
             ty = (j / (num_samples_y - 1)) - 0.5
-            height_sample_offset = ty * mesh_height * 1.1  # Slightly taller than mesh
+            height_sample_offset = ty * mesh_height * 1.1
             
             for i in range(num_samples_x):
-                # Sample from -0.5 to 0.5 of mesh width (centered)
                 tx = (i / (num_samples_x - 1)) - 0.5
-                width_sample_offset = tx * mesh_width * 1.1  # Slightly wider than mesh
+                width_sample_offset = tx * mesh_width * 1.1
                 
-                # Position in 2D grid on the surface
                 sample_point = center_pos + mesh_right * width_sample_offset + mesh_up * height_sample_offset
-                
-                # Cast ray from outside the target mesh inward to find surface
                 ray_origin = sample_point + normal * 100  # Start far outside
-                ray_direction = -normal  # Point inward
                 
-                locations, index_ray, index_tri = target_mesh.ray.intersects_location(
-                    ray_origins=[ray_origin],
-                    ray_directions=[ray_direction]
-                )
-                
-                if len(locations) > 0:
-                    # Find the closest hit to our expected position
-                    distances = np.linalg.norm(locations - sample_point, axis=1)
-                    closest_idx = np.argmin(distances)
-                    hit_point = locations[closest_idx]
-                    hit_tri = index_tri[closest_idx]
-                    hit_normal = target_mesh.face_normals[hit_tri]
-                    hit_normal = hit_normal / np.linalg.norm(hit_normal)
-                    
-                    row_positions.append(hit_point)
-                    row_normals.append(hit_normal)
-                else:
-                    # No hit - use the projected point
-                    row_positions.append(sample_point)
-                    row_normals.append(normal)
+                sample_origins.append(ray_origin)
+                sample_params.append((i, j, sample_point))
+        
+        # BATCH ray cast for efficiency
+        sample_origins = np.array(sample_origins)
+        ray_directions = np.tile(-normal, (len(sample_origins), 1))
+        
+        locations, index_ray, index_tri = target_mesh.ray.intersects_location(
+            ray_origins=sample_origins,
+            ray_directions=ray_directions
+        )
+        
+        # Build result grid
+        sample_grid_positions = [[None for _ in range(num_samples_x)] for _ in range(num_samples_y)]
+        sample_grid_normals = [[normal.copy() for _ in range(num_samples_x)] for _ in range(num_samples_y)]
+        
+        # Initialize with projected points
+        for idx, (i, j, sample_point) in enumerate(sample_params):
+            sample_grid_positions[j][i] = sample_point.copy()
+        
+        # Process ray hits
+        for hit_idx in range(len(locations)):
+            ray_idx = index_ray[hit_idx]
+            i, j, sample_point = sample_params[ray_idx]
+            hit_point = locations[hit_idx]
+            hit_tri = index_tri[hit_idx]
             
-            sample_grid_positions.append(row_positions)
-            sample_grid_normals.append(row_normals)
+            # Check if this is closer than current
+            if sample_grid_positions[j][i] is None or \
+               np.linalg.norm(hit_point - sample_point) < np.linalg.norm(sample_grid_positions[j][i] - sample_point):
+                sample_grid_positions[j][i] = hit_point
+                hit_normal = target_mesh.face_normals[hit_tri]
+                sample_grid_normals[j][i] = hit_normal / np.linalg.norm(hit_normal)
         
         # Get the original mesh bounds for mapping
         x_min, x_max = bounds[0][0], bounds[1][0]
@@ -1177,18 +1167,25 @@ class OrthosisProcessor:
         y_range = y_max - y_min if y_max > y_min else 1.0
         z_range = z_max - z_min if z_max > z_min else 1.0
         
-        # Transform each vertex using bilinear interpolation from 2D grid
+        # OPTIMIZED: Vectorized vertex transformation
         vertices = flat_mesh.vertices.copy()
-        new_vertices = []
+        new_vertices = np.zeros_like(vertices)
         
-        for v in vertices:
-            # Map X position (0 to 1) along the sampled surface curve
-            tx = (v[0] - x_min) / x_range
-            tx = np.clip(tx, 0, 1)
-            
-            # Map Y position (0 to 1) along the height
-            ty = (v[1] - y_min) / y_range
-            ty = np.clip(ty, 0, 1)
+        # Compute normalized positions for all vertices at once
+        tx_all = np.clip((vertices[:, 0] - x_min) / x_range, 0, 1)
+        ty_all = np.clip((vertices[:, 1] - y_min) / y_range, 0, 1)
+        tz_all = (vertices[:, 2] - z_min) / z_range if z_range > 0 else np.zeros(len(vertices))
+        
+        # Pre-compute depth mapping parameters
+        max_inward = depth
+        max_outward = 50.0
+        total_range = max_inward + max_outward
+        
+        # Process vertices in batch
+        for v_idx in range(len(vertices)):
+            tx = tx_all[v_idx]
+            ty = ty_all[v_idx]
+            z_normalized = tz_all[v_idx]
             
             # Bilinear interpolation indices
             sample_idx_x = tx * (num_samples_x - 1)
@@ -1217,26 +1214,17 @@ class OrthosisProcessor:
             n11 = np.array(sample_grid_normals[iy_high][ix_high])
             
             local_normal = (1 - fx) * (1 - fy) * n00 + fx * (1 - fy) * n10 + (1 - fx) * fy * n01 + fx * fy * n11
-            local_normal = local_normal / np.linalg.norm(local_normal)  # Normalize
+            norm_len = np.linalg.norm(local_normal)
+            if norm_len > 0:
+                local_normal = local_normal / norm_len
+            else:
+                local_normal = normal
             
-            # Map Z position (depth into surface)
-            # Normalize Z to 0-1 range where 0 is bottom of mesh, 1 is top
-            z_normalized = (v[2] - z_min) / z_range if z_range > 0 else 0
-            
-            # For engraving: mesh cuts INTO the surface
-            # z_normalized=0 (bottom) -> inside surface by depth amount (negative = into mesh)
-            # z_normalized=1 (top) -> outside surface (positive = away from mesh for clean boolean cut)
-            max_inward = depth  # Use exact specified depth
-            max_outward = 50.0  # Extend 50mm outside to cut through any surface curvature from all angles
-            total_range = max_inward + max_outward
-            # Correct mapping: 0 -> -max_inward (inside), 1 -> +max_outward (outside)
+            # Map Z position to depth
             distance_from_surface = -max_inward + z_normalized * total_range
-            # Use LOCAL normal for depth direction to follow the curved surface
-            new_pos = surf_pos + local_normal * distance_from_surface
-            
-            new_vertices.append(new_pos)
+            new_vertices[v_idx] = surf_pos + local_normal * distance_from_surface
         
-        flat_mesh.vertices = np.array(new_vertices)
+        flat_mesh.vertices = new_vertices
         
         # If the coordinate frame is mirrored (left side), we need to flip the faces
         # to maintain correct winding order for the boolean operation

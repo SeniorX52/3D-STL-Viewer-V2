@@ -1158,11 +1158,23 @@ class MainWindow(QMainWindow):
         export_group = QGroupBox("4. Export STL Files")
         export_layout = QVBoxLayout(export_group)
         
+        # Export both button
         self.export_btn = QPushButton("Export Both L and R")
         self.export_btn.setMinimumHeight(40)
         self.export_btn.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold;")
         self.export_btn.clicked.connect(self._export_both)
         export_layout.addWidget(self.export_btn)
+        
+        # Separate export buttons
+        separate_layout = QHBoxLayout()
+        self.export_left_btn = QPushButton("Export Left Only")
+        self.export_left_btn.clicked.connect(lambda: self._export_single('L'))
+        separate_layout.addWidget(self.export_left_btn)
+        
+        self.export_right_btn = QPushButton("Export Right Only")
+        self.export_right_btn.clicked.connect(lambda: self._export_single('R'))
+        separate_layout.addWidget(self.export_right_btn)
+        export_layout.addLayout(separate_layout)
         
         self.export_status = QLabel("")
         self.export_status.setWordWrap(True)
@@ -1242,6 +1254,8 @@ class MainWindow(QMainWindow):
         # Export requires at least one applied
         can_export = has_mesh and (self._logo_applied or self._text_applied)
         self.export_btn.setEnabled(can_export)
+        self.export_left_btn.setEnabled(can_export)
+        self.export_right_btn.setEnabled(can_export)
     
     # === Slider handlers ===
     
@@ -1299,7 +1313,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to load STL:\n{str(e)}")
     
     def _export_both(self):
-        """Export both L and R STL files."""
+        """Export both L and R STL files with proper save dialog."""
         if not (self._logo_applied or self._text_applied):
             QMessageBox.warning(self, "Warning", "Please apply logo or text first.")
             return
@@ -1308,24 +1322,98 @@ class MainWindow(QMainWindow):
         if not patient_name:
             patient_name = "Orthosis"
         
-        output_dir = QFileDialog.getExistingDirectory(
+        date_str = self.date_edit.text().strip().replace('/', '-').replace('\\', '-').replace(':', '-')
+        
+        # Create default filename
+        default_filename = f"{patient_name}_{date_str}"
+        
+        # Use getSaveFileName for clearer save action
+        file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "Select Output Directory",
-            self.last_directory
+            "Save STL Files (Base Name)",
+            os.path.join(self.last_directory, default_filename),
+            "STL Files (*.stl);;All Files (*.*)"
         )
         
-        if output_dir:
+        if file_path:
             try:
-                date_str = self.date_edit.text().strip()
-                left_path, right_path = self.processor.export_both(output_dir, patient_name, date_str)
+                # Remove extension if present
+                base_path = file_path
+                if base_path.lower().endswith('.stl'):
+                    base_path = base_path[:-4]
                 
-                self.export_status.setText(f"Exported:\n{os.path.basename(left_path)}\n{os.path.basename(right_path)}")
+                output_dir = os.path.dirname(base_path)
+                base_name = os.path.basename(base_path)
+                
+                # Export both files
+                left_path = f"{base_path}_L.stl"
+                right_path = f"{base_path}_R.stl"
+                
+                self.processor.orthosis_mirrored.export(left_path, file_type='stl')
+                self.processor.orthosis_original.export(right_path, file_type='stl')
+                
+                # Update last directory
+                self.last_directory = output_dir
+                self.settings.setValue('last_directory', self.last_directory)
+                
+                self.export_status.setText(f"Saved:\n{os.path.basename(left_path)}\n{os.path.basename(right_path)}")
                 self.status_bar.showMessage(f"Successfully exported to {output_dir}")
                 
                 QMessageBox.information(
                     self, 
                     "Export Complete",
-                    f"Files exported:\n\n{os.path.basename(left_path)}\n{os.path.basename(right_path)}\n\nLocation: {output_dir}"
+                    f"Files saved:\n\n{os.path.basename(left_path)}\n{os.path.basename(right_path)}\n\nLocation: {output_dir}"
+                )
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Export failed:\n{str(e)}")
+    
+    def _export_single(self, side: str):
+        """Export a single L or R STL file."""
+        if not (self._logo_applied or self._text_applied):
+            QMessageBox.warning(self, "Warning", "Please apply logo or text first.")
+            return
+        
+        patient_name = self.patient_name_edit.text().strip()
+        if not patient_name:
+            patient_name = "Orthosis"
+        
+        date_str = self.date_edit.text().strip().replace('/', '-').replace('\\', '-').replace(':', '-')
+        
+        # Create default filename
+        default_filename = f"{patient_name}_{date_str}_{side}.stl"
+        
+        # Use getSaveFileName for clear save action
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            f"Save {side} STL File",
+            os.path.join(self.last_directory, default_filename),
+            "STL Files (*.stl);;All Files (*.*)"
+        )
+        
+        if file_path:
+            try:
+                # Ensure .stl extension
+                if not file_path.lower().endswith('.stl'):
+                    file_path += '.stl'
+                
+                # Export the appropriate mesh
+                if side == 'L':
+                    self.processor.orthosis_mirrored.export(file_path, file_type='stl')
+                else:
+                    self.processor.orthosis_original.export(file_path, file_type='stl')
+                
+                # Update last directory
+                self.last_directory = os.path.dirname(file_path)
+                self.settings.setValue('last_directory', self.last_directory)
+                
+                self.export_status.setText(f"Saved: {os.path.basename(file_path)}")
+                self.status_bar.showMessage(f"Successfully exported: {file_path}")
+                
+                QMessageBox.information(
+                    self, 
+                    "Export Complete",
+                    f"File saved:\n{os.path.basename(file_path)}\n\nLocation: {os.path.dirname(file_path)}"
                 )
                 
             except Exception as e:

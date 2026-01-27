@@ -10,7 +10,7 @@
 ; Build with: "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 
 #define MyAppName "Orthosis Customizer"
-#define MyAppVersion "2.0.0"
+#define MyAppVersion "1.0.0"
 #define MyAppPublisher "Mostafa Abdelaziz"
 #define MyAppURL ""
 #define MyAppExeName "OrthosisCustomizer.exe"
@@ -68,9 +68,6 @@ Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescrip
 Source: "dist\OrthosisCustomizer.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Documentation
-Source: "docs\USER_GUIDE.md"; DestDir: "{app}\docs"; Flags: ignoreversion
-Source: "docs\TECHNICAL.md"; DestDir: "{app}\docs"; Flags: ignoreversion
-Source: "docs\LABEL_METHOD.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Logo STL files
