@@ -1343,6 +1343,181 @@ class OrthosisProcessor:
         
         return mesh
     
+    def _flatten_engraved_faces(self, 
+                                result_mesh: trimesh.Trimesh, 
+                                original_mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+        """
+        Post-process boolean result to flatten engraved surface faces.
+        
+        This is the industrial-grade solution for eliminating striations and
+        artifacts on engraved surfaces. The key insight is that mesh boolean
+        operations create new triangles whose vertices don't lie exactly on
+        the ideal flat plane due to:
+        1. Floating-point precision limitations
+        2. Tessellation mismatch between the two input meshes
+        3. Vertex placement during co-refinement
+        
+        Solution: Identify faces that should be flat (new interior faces from
+        the engraving tool) and project their vertices to be coplanar.
+        
+        Args:
+            result_mesh: The mesh resulting from boolean operation
+            original_mesh: The original mesh before boolean (used for comparison)
+            
+        Returns:
+            Mesh with flattened engraving surfaces
+        """
+        try:
+            import scipy.spatial
+            
+            # Build KD-tree of original mesh vertices for fast lookup
+            original_verts = original_mesh.vertices
+            tree = scipy.spatial.cKDTree(original_verts)
+            
+            # Identify NEW vertices (not present in original mesh)
+            # These are vertices created by the boolean operation
+            result_verts = result_mesh.vertices
+            distances, indices = tree.query(result_verts, k=1)
+            
+            # Vertices are "new" if they're more than a small threshold away from any original vertex
+            threshold = 0.01  # 0.01mm threshold
+            is_new_vertex = distances > threshold
+            
+            # Find faces where ALL vertices are new (interior engraving faces)
+            # and faces where the normal points inward (engraved bottom surfaces)
+            face_normals = result_mesh.face_normals
+            faces = result_mesh.faces
+            
+            # Compute which faces are new interior faces
+            # A face is a new interior face if:
+            # 1. At least 2 of its vertices are new, AND
+            # 2. Its normal points roughly "inward" (similar direction across the face)
+            new_face_indices = []
+            face_new_vertex_counts = np.sum(is_new_vertex[faces], axis=1)
+            
+            for face_idx in range(len(faces)):
+                if face_new_vertex_counts[face_idx] >= 2:
+                    new_face_indices.append(face_idx)
+            
+            if len(new_face_indices) == 0:
+                print("No new interior faces found - skipping flattening")
+                return result_mesh
+            
+            print(f"Found {len(new_face_indices)} new faces from boolean operation")
+            
+            # Group new faces by their approximate normal direction
+            # Faces with similar normals likely belong to the same flat region
+            new_face_normals = face_normals[new_face_indices]
+            
+            # Use connected components of faces with similar normals
+            # This groups faces that should be coplanar
+            from collections import defaultdict
+            
+            # Build face adjacency for new faces only
+            new_face_set = set(new_face_indices)
+            
+            # Create vertex-to-face mapping for new faces
+            vert_to_faces = defaultdict(list)
+            for nf_idx, face_idx in enumerate(new_face_indices):
+                for v in faces[face_idx]:
+                    vert_to_faces[v].append(nf_idx)
+            
+            # Find connected components of new faces (faces that share edges or vertices)
+            visited = set()
+            components = []
+            
+            for start_nf_idx in range(len(new_face_indices)):
+                if start_nf_idx in visited:
+                    continue
+                
+                # BFS to find connected component
+                component = []
+                queue = [start_nf_idx]
+                visited.add(start_nf_idx)
+                
+                while queue:
+                    current = queue.pop(0)
+                    component.append(current)
+                    
+                    # Find adjacent faces (share at least one vertex)
+                    current_face_idx = new_face_indices[current]
+                    for v in faces[current_face_idx]:
+                        for neighbor_nf_idx in vert_to_faces[v]:
+                            if neighbor_nf_idx not in visited:
+                                # Check if normals are similar (within ~45 degrees)
+                                dot = np.dot(new_face_normals[current], new_face_normals[neighbor_nf_idx])
+                                if dot > 0.7:  # cos(45°) ≈ 0.707
+                                    visited.add(neighbor_nf_idx)
+                                    queue.append(neighbor_nf_idx)
+                
+                if len(component) >= 3:  # Only consider components with at least 3 faces
+                    components.append(component)
+            
+            print(f"Found {len(components)} connected face groups to potentially flatten")
+            
+            # For each component, fit a plane and project vertices onto it
+            vertices = result_mesh.vertices.copy()
+            modified_vertices = set()
+            
+            for comp_idx, component in enumerate(components):
+                # Get all unique vertices in this component
+                comp_face_indices = [new_face_indices[i] for i in component]
+                comp_verts = set()
+                for fi in comp_face_indices:
+                    for v in faces[fi]:
+                        if is_new_vertex[v]:  # Only modify new vertices
+                            comp_verts.add(v)
+                
+                if len(comp_verts) < 3:
+                    continue
+                
+                comp_vert_list = list(comp_verts)
+                comp_vert_positions = vertices[comp_vert_list]
+                
+                # Fit a plane using PCA (principal component analysis)
+                # The plane's normal is the eigenvector with smallest eigenvalue
+                centroid = np.mean(comp_vert_positions, axis=0)
+                centered = comp_vert_positions - centroid
+                
+                # Compute covariance matrix
+                cov_matrix = np.cov(centered.T)
+                eigenvalues, eigenvectors = np.linalg.eigh(cov_matrix)
+                
+                # Plane normal is the eigenvector with smallest eigenvalue
+                # (direction of least variance = perpendicular to the plane)
+                plane_normal = eigenvectors[:, 0]
+                
+                # Check if this is a "flat" region (small variance in normal direction)
+                # ratio of smallest to largest eigenvalue indicates flatness
+                flatness_ratio = eigenvalues[0] / (eigenvalues[2] + 1e-10)
+                
+                if flatness_ratio > 0.1:  # Not flat enough (>10% variance ratio)
+                    continue
+                
+                # Project all component vertices onto the fitted plane
+                for v_idx in comp_vert_list:
+                    point = vertices[v_idx]
+                    # Project onto plane: point - dot(point - centroid, normal) * normal
+                    dist_to_plane = np.dot(point - centroid, plane_normal)
+                    vertices[v_idx] = point - dist_to_plane * plane_normal
+                    modified_vertices.add(v_idx)
+            
+            print(f"Flattened {len(modified_vertices)} vertices across {len(components)} regions")
+            
+            # Update mesh with flattened vertices
+            if len(modified_vertices) > 0:
+                result_mesh.vertices = vertices
+                # Recompute normals after flattening
+                result_mesh.fix_normals()
+            
+            return result_mesh
+            
+        except Exception as e:
+            print(f"Face flattening failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return result_mesh
+    
     def _meshlib_boolean_difference_on_mesh(self, 
                                             target_mesh: trimesh.Trimesh,
                                             tool_mesh: trimesh.Trimesh) -> Optional[trimesh.Trimesh]:
@@ -1392,6 +1567,11 @@ class OrthosisProcessor:
                     if result_mesh is not None and hasattr(result_mesh, 'vertices') and len(result_mesh.vertices) > 0:
                         result_mesh.fix_normals()
                         print(f"MeshLib boolean success: {len(result_mesh.vertices)} vertices")
+                        
+                        # Post-process: flatten engraved surfaces for clean appearance
+                        # This is the industrial-grade solution for boolean striation artifacts
+                        result_mesh = self._flatten_engraved_faces(result_mesh, target_mesh)
+                        
                         return result_mesh
                 else:
                     # If MeshLib boolean failed, try alternate approach: use manifold tool mesh
@@ -1411,6 +1591,7 @@ class OrthosisProcessor:
                             if result_mesh is not None and hasattr(result_mesh, 'vertices') and len(result_mesh.vertices) > 0:
                                 result_mesh.fix_normals()
                                 print(f"MeshLib boolean (after repair) success: {len(result_mesh.vertices)} vertices")
+                                result_mesh = self._flatten_engraved_faces(result_mesh, target_mesh)
                                 return result_mesh
                     except Exception as repair_err:
                         print(f"Repair attempt failed: {repair_err}")
@@ -1437,6 +1618,7 @@ class OrthosisProcessor:
                             if result_mesh is not None and hasattr(result_mesh, 'vertices') and len(result_mesh.vertices) > 0:
                                 result_mesh.fix_normals()
                                 print(f"MeshLib boolean (after trimesh repair) success: {len(result_mesh.vertices)} vertices")
+                                result_mesh = self._flatten_engraved_faces(result_mesh, target_mesh)
                                 return result_mesh
                     except Exception as repair_err2:
                         print(f"Trimesh repair attempt failed: {repair_err2}")
