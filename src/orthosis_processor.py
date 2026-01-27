@@ -1398,6 +1398,19 @@ class OrthosisProcessor:
                     print(f"Boolean error: {result.errorString}")
                 
                 if is_valid and num_faces > 0:
+                    # Apply local remeshing to improve mesh quality at cut edges
+                    # This eliminates thin/elongated triangles that cause visible striations
+                    try:
+                        remesh_settings = mr.RemeshSettings()
+                        remesh_settings.targetEdgeLen = 0.5  # Target edge length in mm
+                        remesh_settings.maxEdgeSplits = 10000
+                        remesh_settings.finalRelaxIters = 3
+                        remesh_settings.packMesh = True
+                        mr.remesh(result.mesh, remesh_settings)
+                        print(f"Remeshed to improve quality: {result.mesh.topology.numValidFaces()} faces")
+                    except Exception as remesh_err:
+                        print(f"Remesh skipped: {remesh_err}")
+                    
                     mr.saveMesh(result.mesh, result_path)
                     result_mesh = trimesh.load(result_path, force='mesh')
                     if result_mesh is not None and hasattr(result_mesh, 'vertices') and len(result_mesh.vertices) > 0:
@@ -1417,6 +1430,14 @@ class OrthosisProcessor:
                         
                         result2 = mr.boolean(target_mr, tool_mr, mr.BooleanOperation.DifferenceAB)
                         if result2.valid() and result2.mesh.topology.numValidFaces() > 0:
+                            # Remesh to improve quality
+                            try:
+                                remesh_settings = mr.RemeshSettings()
+                                remesh_settings.targetEdgeLen = 0.5
+                                remesh_settings.finalRelaxIters = 3
+                                mr.remesh(result2.mesh, remesh_settings)
+                            except:
+                                pass
                             mr.saveMesh(result2.mesh, result_path)
                             result_mesh = trimesh.load(result_path, force='mesh')
                             if result_mesh is not None and hasattr(result_mesh, 'vertices') and len(result_mesh.vertices) > 0:
@@ -1443,6 +1464,14 @@ class OrthosisProcessor:
                         
                         result3 = mr.boolean(target_mr, tool_mr2, mr.BooleanOperation.DifferenceAB)
                         if result3.valid() and result3.mesh.topology.numValidFaces() > 0:
+                            # Remesh to improve quality
+                            try:
+                                remesh_settings = mr.RemeshSettings()
+                                remesh_settings.targetEdgeLen = 0.5
+                                remesh_settings.finalRelaxIters = 3
+                                mr.remesh(result3.mesh, remesh_settings)
+                            except:
+                                pass
                             mr.saveMesh(result3.mesh, result_path)
                             result_mesh = trimesh.load(result_path, force='mesh')
                             if result_mesh is not None and hasattr(result_mesh, 'vertices') and len(result_mesh.vertices) > 0:
