@@ -1141,9 +1141,8 @@ class OrthosisProcessor:
             ray_directions=ray_directions
         )
         
-        # Build result grid
+        # Build result grid (positions only - we use a single consistent normal)
         sample_grid_positions = [[None for _ in range(num_samples_x)] for _ in range(num_samples_y)]
-        sample_grid_normals = [[normal.copy() for _ in range(num_samples_x)] for _ in range(num_samples_y)]
         
         # Initialize with projected points
         for idx, (i, j, sample_point) in enumerate(sample_params):
@@ -1151,24 +1150,21 @@ class OrthosisProcessor:
         
         # Process ray hits - find closest hit for each ray
         ray_best_dist = {}  # ray_idx -> best distance
-        ray_best_hit = {}   # ray_idx -> (hit_point, normal)
+        ray_best_hit = {}   # ray_idx -> hit_point
         
         for hit_idx in range(len(locations)):
             ray_idx = index_ray[hit_idx]
             hit_point = locations[hit_idx]
-            hit_tri = index_tri[hit_idx]
             dist = np.linalg.norm(hit_point - sample_origins[ray_idx])
             
             if ray_idx not in ray_best_dist or dist < ray_best_dist[ray_idx]:
                 ray_best_dist[ray_idx] = dist
-                hit_normal = target_mesh.face_normals[hit_tri]
-                ray_best_hit[ray_idx] = (hit_point, hit_normal / np.linalg.norm(hit_normal))
+                ray_best_hit[ray_idx] = hit_point
         
         # Apply best hits to grid
         for idx, (i, j, sample_point) in enumerate(sample_params):
             if idx in ray_best_hit:
-                sample_grid_positions[j][i] = ray_best_hit[idx][0]
-                sample_grid_normals[j][i] = ray_best_hit[idx][1]
+                sample_grid_positions[j][i] = ray_best_hit[idx]
         
         # Get the original mesh bounds for mapping
         x_min, x_max = bounds[0][0], bounds[1][0]
@@ -1192,6 +1188,13 @@ class OrthosisProcessor:
         max_outward = 100.0  # Large enough to ensure clean cuts through any curvature
         total_range = max_inward + max_outward
         
+        # IMPORTANT: Use a SINGLE consistent normal for the entire cutting tool
+        # This ensures the engraved surface (bottom) is perfectly FLAT, not wavy.
+        # Using per-vertex interpolated normals causes "stair-step" artifacts because
+        # vertices at different XY positions would extend in slightly different directions.
+        # The surface curvature is already captured in the interpolated surface positions.
+        engraving_normal = normal  # Use the center normal for all vertices
+        
         # Process vertices with vectorized bilinear interpolation
         for v_idx in range(len(vertices)):
             tx = tx_all[v_idx]
@@ -1210,7 +1213,7 @@ class OrthosisProcessor:
             iy_high = min(iy_low + 1, num_samples_y - 1)
             fy = sample_idx_y - iy_low
             
-            # Bilinear interpolation of surface position
+            # Bilinear interpolation of surface position (where the cutting edge meets surface)
             p00 = np.array(sample_grid_positions[iy_low][ix_low])
             p10 = np.array(sample_grid_positions[iy_low][ix_high])
             p01 = np.array(sample_grid_positions[iy_high][ix_low])
@@ -1218,22 +1221,10 @@ class OrthosisProcessor:
             
             surf_pos = (1 - fx) * (1 - fy) * p00 + fx * (1 - fy) * p10 + (1 - fx) * fy * p01 + fx * fy * p11
             
-            # Bilinear interpolation of surface normal
-            n00 = np.array(sample_grid_normals[iy_low][ix_low])
-            n10 = np.array(sample_grid_normals[iy_low][ix_high])
-            n01 = np.array(sample_grid_normals[iy_high][ix_low])
-            n11 = np.array(sample_grid_normals[iy_high][ix_high])
-            
-            local_normal = (1 - fx) * (1 - fy) * n00 + fx * (1 - fy) * n10 + (1 - fx) * fy * n01 + fx * fy * n11
-            norm_len = np.linalg.norm(local_normal)
-            if norm_len > 0:
-                local_normal = local_normal / norm_len
-            else:
-                local_normal = normal
-            
-            # Map Z position to depth
+            # Map Z position to depth using CONSISTENT normal direction
+            # This ensures flat engraving bottoms without stair-step artifacts
             distance_from_surface = -max_inward + z_normalized * total_range
-            new_vertices[v_idx] = surf_pos + local_normal * distance_from_surface
+            new_vertices[v_idx] = surf_pos + engraving_normal * distance_from_surface
         
         flat_mesh.vertices = new_vertices
         
