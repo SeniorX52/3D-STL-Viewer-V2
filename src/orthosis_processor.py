@@ -1126,10 +1126,12 @@ class OrthosisProcessor:
         
         # The cutting tool should:
         # - z_min (bottom of extrusion) -> depth mm INTO the surface (negative normal direction)
-        # - z_max (top of extrusion) -> 10mm OUTSIDE the surface (positive normal direction)
-        # This creates a cutting tool that extends from -depth to +10mm along the normal
+        # - z_max (top of extrusion) -> far OUTSIDE the surface (positive normal direction)
+        # This creates a cutting tool that extends from -depth to +outward_extension along the normal
         
-        outward_extension = 10.0  # mm outside surface (enough for clean cuts)
+        # Use large outward extension to ensure clean cuts through curved surface
+        # The surface curves, so we need to start far enough outside to clear all curvature
+        outward_extension = 50.0  # mm outside surface
         
         for i in range(len(vertices)):
             # Get position in original flat mesh
