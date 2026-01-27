@@ -1059,24 +1059,21 @@ class OrthosisProcessor:
                               surface_normal: np.ndarray,
                               depth: float) -> trimesh.Trimesh:
         """
-        Position a flat mesh (logo/text) for engraving on a curved surface.
+        Wrap a flat mesh (logo/text) to follow a curved surface for engraving.
         
-        SIMPLIFIED VERSION: Position the flat cutting tool perpendicular to the surface.
-        This creates clean, flat-bottomed engravings without mesh corruption.
-        
-        The cutting tool extends:
-        - Inward: by 'depth' mm (the visible engraving depth)  
-        - Outward: by 10mm (enough to cut through surface curvature)
+        Uses grid-based surface sampling with bilinear interpolation to follow
+        the surface curvature, but uses a SINGLE normal direction for the depth
+        to ensure flat-bottomed engravings without stair-step artifacts.
         
         Args:
             flat_mesh: Flat mesh (in XY plane, extruded in Z)
-            target_mesh: The mesh surface to conform to (used for reference only)
+            target_mesh: The mesh surface to conform to
             center_pos: Center position on the surface
             surface_normal: Normal vector at the center position
             depth: Engraving depth in mm
             
         Returns:
-            Transformed mesh positioned for engraving
+            Transformed mesh wrapped to surface
         """
         # Get mesh dimensions
         bounds = flat_mesh.bounds
@@ -1085,14 +1082,12 @@ class OrthosisProcessor:
         mesh_depth_orig = bounds[1][2] - bounds[0][2]
         
         print(f"Mesh dimensions: width={mesh_width:.1f}, height={mesh_height:.1f}, depth={mesh_depth_orig:.1f}")
-        print(f"Engraving depth requested: {depth:.2f}mm")
+        print(f"Engraving depth: {depth:.2f}mm")
         
         # Normalize the surface normal (points outward from surface)
         normal = surface_normal / np.linalg.norm(surface_normal)
         
-        # Build a coordinate frame for positioning
-        # mesh_up: always world Z (horizontal text)
-        # mesh_right: perpendicular to normal and up
+        # Build coordinate frame for placement
         world_up = np.array([0.0, 0.0, 1.0])
         mesh_up = world_up.copy()
         
@@ -1109,53 +1104,120 @@ class OrthosisProcessor:
         cross_check = np.cross(mesh_right, mesh_up)
         is_mirrored = np.dot(cross_check, normal) < 0
         
+        # === GRID-BASED SURFACE SAMPLING ===
+        # Sample the surface at a grid of points to capture curvature
+        num_samples_x = 25
+        num_samples_y = 20
+        
+        # Create sample grid in the tangent plane
+        sample_rays_origins = []
+        sample_grid_coords = []
+        
+        for j in range(num_samples_y):
+            ty = (j / (num_samples_y - 1)) - 0.5  # -0.5 to 0.5
+            y_offset = ty * mesh_height * 1.2  # Slightly larger than mesh
+            
+            for i in range(num_samples_x):
+                tx = (i / (num_samples_x - 1)) - 0.5  # -0.5 to 0.5
+                x_offset = tx * mesh_width * 1.2  # Slightly larger than mesh
+                
+                # Point in tangent plane
+                sample_point = center_pos + mesh_right * x_offset + mesh_up * y_offset
+                # Ray origin: far outside along normal
+                ray_origin = sample_point + normal * 100.0
+                
+                sample_rays_origins.append(ray_origin)
+                sample_grid_coords.append((i, j, x_offset, y_offset))
+        
+        # Batch ray cast to find surface positions
+        ray_origins = np.array(sample_rays_origins)
+        ray_directions = np.tile(-normal, (len(ray_origins), 1))
+        
+        locations, index_ray, index_tri = target_mesh.ray.intersects_location(
+            ray_origins=ray_origins,
+            ray_directions=ray_directions
+        )
+        
+        # Build surface position grid
+        # Initialize with fallback positions (on tangent plane at center_pos height)
+        surface_grid = [[None for _ in range(num_samples_x)] for _ in range(num_samples_y)]
+        
+        for idx, (i, j, x_off, y_off) in enumerate(sample_grid_coords):
+            # Default: point on tangent plane
+            surface_grid[j][i] = center_pos + mesh_right * x_off + mesh_up * y_off
+        
+        # Find closest hit for each ray
+        ray_hits = {}
+        for hit_idx in range(len(locations)):
+            ray_idx = index_ray[hit_idx]
+            hit_point = locations[hit_idx]
+            dist = np.linalg.norm(hit_point - ray_origins[ray_idx])
+            
+            if ray_idx not in ray_hits or dist < ray_hits[ray_idx][0]:
+                ray_hits[ray_idx] = (dist, hit_point)
+        
+        # Update grid with actual surface hits
+        for idx, (i, j, x_off, y_off) in enumerate(sample_grid_coords):
+            if idx in ray_hits:
+                surface_grid[j][i] = ray_hits[idx][1]
+        
+        # === VERTEX TRANSFORMATION ===
         # Get original mesh bounds for mapping
         x_min, x_max = bounds[0][0], bounds[1][0]
         y_min, y_max = bounds[0][1], bounds[1][1]
         z_min, z_max = bounds[0][2], bounds[1][2]
         
-        x_center = (x_min + x_max) / 2
-        y_center = (y_min + y_max) / 2
+        x_range = x_max - x_min if x_max > x_min else 1.0
+        y_range = y_max - y_min if y_max > y_min else 1.0
         z_range = z_max - z_min if z_max > z_min else 1.0
         
-        # Transform each vertex
-        # Original: X = width, Y = height, Z = extrusion depth
-        # Target: map to 3D position using mesh_right, mesh_up, and normal
         vertices = flat_mesh.vertices.copy()
         new_vertices = np.zeros_like(vertices)
         
-        # The cutting tool should:
-        # - z_min (bottom of extrusion) -> depth mm INTO the surface (negative normal direction)
-        # - z_max (top of extrusion) -> far OUTSIDE the surface (positive normal direction)
-        # This creates a cutting tool that extends from -depth to +outward_extension along the normal
+        # Outward extension for clean boolean cuts
+        outward_extension = 50.0
         
-        # Use large outward extension to ensure clean cuts through curved surface
-        # The surface curves, so we need to start far enough outside to clear all curvature
-        outward_extension = 50.0  # mm outside surface
-        
-        for i in range(len(vertices)):
-            # Get position in original flat mesh
-            x_orig = vertices[i, 0]
-            y_orig = vertices[i, 1]
-            z_orig = vertices[i, 2]
+        for v_idx in range(len(vertices)):
+            # Normalize vertex position to 0-1 range
+            tx = (vertices[v_idx, 0] - x_min) / x_range  # 0 to 1
+            ty = (vertices[v_idx, 1] - y_min) / y_range  # 0 to 1
+            tz = (vertices[v_idx, 2] - z_min) / z_range  # 0 to 1
             
-            # Map X, Y to mesh_right and mesh_up directions (centered)
-            x_offset = x_orig - x_center
-            y_offset = y_orig - y_center
+            # Clamp to grid bounds
+            tx = np.clip(tx, 0, 1)
+            ty = np.clip(ty, 0, 1)
             
-            # Map Z to depth along normal
-            # z_min -> -depth (into surface)
-            # z_max -> +outward_extension (outside surface)
-            z_normalized = (z_orig - z_min) / z_range  # 0 to 1
-            z_offset = -depth + z_normalized * (depth + outward_extension)
+            # Bilinear interpolation indices
+            gx = tx * (num_samples_x - 1)
+            gy = ty * (num_samples_y - 1)
             
-            # Compute final 3D position
-            new_vertices[i] = (
-                center_pos + 
-                mesh_right * x_offset + 
-                mesh_up * y_offset + 
-                normal * z_offset
+            ix = int(gx)
+            iy = int(gy)
+            ix = min(ix, num_samples_x - 2)
+            iy = min(iy, num_samples_y - 2)
+            
+            fx = gx - ix
+            fy = gy - iy
+            
+            # Bilinear interpolation of surface position
+            p00 = surface_grid[iy][ix]
+            p10 = surface_grid[iy][ix + 1]
+            p01 = surface_grid[iy + 1][ix]
+            p11 = surface_grid[iy + 1][ix + 1]
+            
+            surf_pos = (
+                (1 - fx) * (1 - fy) * p00 +
+                fx * (1 - fy) * p10 +
+                (1 - fx) * fy * p01 +
+                fx * fy * p11
             )
+            
+            # Map Z to depth using SINGLE normal (for flat bottom)
+            # tz=0 (bottom of extrusion) -> depth INTO surface
+            # tz=1 (top of extrusion) -> outward_extension OUTSIDE surface
+            z_offset = -depth + tz * (depth + outward_extension)
+            
+            new_vertices[v_idx] = surf_pos + normal * z_offset
         
         flat_mesh.vertices = new_vertices
         
