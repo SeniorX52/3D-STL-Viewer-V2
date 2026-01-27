@@ -1061,8 +1061,15 @@ class OrthosisProcessor:
         """
         Wrap/conform a flat mesh (logo/text) to follow the curved surface.
         
-        OPTIMIZED VERSION: Uses batch ray casting and simplified coordinate mapping
-        to avoid distortion on curved surfaces.
+        INDUSTRY-GRADE VERSION: Uses per-vertex ray casting for precise surface
+        conformance on curved surfaces. Each vertex is precisely positioned on
+        the actual surface, eliminating gaps caused by bilinear interpolation.
+        
+        Key improvements:
+        1. Per-vertex ray casting for exact surface placement
+        2. Larger outward extension (100mm) to ensure complete boolean cuts
+        3. Local normal computation per vertex for accurate engraving direction
+        4. Robust fallback when rays miss the surface
         
         Args:
             flat_mesh: Flat mesh (in XY plane, extruded in Z)
@@ -1106,59 +1113,6 @@ class OrthosisProcessor:
         
         print(f"Coordinate frame: normal={normal}, mesh_right={mesh_right}, mesh_up={mesh_up}, mirrored={is_mirrored}")
         
-        # OPTIMIZED: Use fewer samples with batch ray casting
-        num_samples_x = 12  # Reduced from 20
-        num_samples_y = 8   # Reduced from 15
-        
-        # Create sample grid points in BATCH for efficient ray casting
-        sample_origins = []
-        sample_params = []  # Store (i, j) for each sample
-        
-        for j in range(num_samples_y):
-            ty = (j / (num_samples_y - 1)) - 0.5
-            height_sample_offset = ty * mesh_height * 1.1
-            
-            for i in range(num_samples_x):
-                tx = (i / (num_samples_x - 1)) - 0.5
-                width_sample_offset = tx * mesh_width * 1.1
-                
-                sample_point = center_pos + mesh_right * width_sample_offset + mesh_up * height_sample_offset
-                ray_origin = sample_point + normal * 100  # Start far outside
-                
-                sample_origins.append(ray_origin)
-                sample_params.append((i, j, sample_point))
-        
-        # BATCH ray cast for efficiency
-        sample_origins = np.array(sample_origins)
-        ray_directions = np.tile(-normal, (len(sample_origins), 1))
-        
-        locations, index_ray, index_tri = target_mesh.ray.intersects_location(
-            ray_origins=sample_origins,
-            ray_directions=ray_directions
-        )
-        
-        # Build result grid
-        sample_grid_positions = [[None for _ in range(num_samples_x)] for _ in range(num_samples_y)]
-        sample_grid_normals = [[normal.copy() for _ in range(num_samples_x)] for _ in range(num_samples_y)]
-        
-        # Initialize with projected points
-        for idx, (i, j, sample_point) in enumerate(sample_params):
-            sample_grid_positions[j][i] = sample_point.copy()
-        
-        # Process ray hits
-        for hit_idx in range(len(locations)):
-            ray_idx = index_ray[hit_idx]
-            i, j, sample_point = sample_params[ray_idx]
-            hit_point = locations[hit_idx]
-            hit_tri = index_tri[hit_idx]
-            
-            # Check if this is closer than current
-            if sample_grid_positions[j][i] is None or \
-               np.linalg.norm(hit_point - sample_point) < np.linalg.norm(sample_grid_positions[j][i] - sample_point):
-                sample_grid_positions[j][i] = hit_point
-                hit_normal = target_mesh.face_normals[hit_tri]
-                sample_grid_normals[j][i] = hit_normal / np.linalg.norm(hit_normal)
-        
         # Get the original mesh bounds for mapping
         x_min, x_max = bounds[0][0], bounds[1][0]
         y_min, y_max = bounds[0][1], bounds[1][1]
@@ -1167,62 +1121,105 @@ class OrthosisProcessor:
         y_range = y_max - y_min if y_max > y_min else 1.0
         z_range = z_max - z_min if z_max > z_min else 1.0
         
-        # OPTIMIZED: Vectorized vertex transformation
         vertices = flat_mesh.vertices.copy()
         new_vertices = np.zeros_like(vertices)
         
-        # Compute normalized positions for all vertices at once
+        # Compute normalized positions for all vertices
+        # tx, ty: position in flat mesh's XY plane (0-1 range)
+        # tz: position in Z (extrusion direction, 0=bottom, 1=top)
         tx_all = np.clip((vertices[:, 0] - x_min) / x_range, 0, 1)
         ty_all = np.clip((vertices[:, 1] - y_min) / y_range, 0, 1)
         tz_all = (vertices[:, 2] - z_min) / z_range if z_range > 0 else np.zeros(len(vertices))
         
-        # Pre-compute depth mapping parameters
-        max_inward = depth
-        max_outward = 50.0
+        # Convert flat mesh XY positions to 3D positions on the target surface plane
+        # Map (0,1) to (-0.5, 0.5) for centering
+        offset_x = (tx_all - 0.5) * mesh_width
+        offset_y = (ty_all - 0.5) * mesh_height
+        
+        # Compute 3D positions in the tangent plane
+        tangent_positions = (
+            center_pos[np.newaxis, :] + 
+            offset_x[:, np.newaxis] * mesh_right[np.newaxis, :] + 
+            offset_y[:, np.newaxis] * mesh_up[np.newaxis, :]
+        )
+        
+        # BATCH per-vertex ray casting: shoot rays from far outside toward the surface
+        # Use a very large distance to ensure we're outside any surface curvature
+        ray_distance = 150.0  # mm - far enough to be outside any orthosis
+        ray_origins = tangent_positions + normal * ray_distance
+        ray_directions = np.tile(-normal, (len(vertices), 1))
+        
+        # Perform batch ray casting
+        locations, index_ray, index_tri = target_mesh.ray.intersects_location(
+            ray_origins=ray_origins,
+            ray_directions=ray_directions
+        )
+        
+        # Build lookup tables for ray hits
+        # For each vertex, find the closest hit (in case of multiple intersections)
+        vertex_surface_pos = np.full((len(vertices), 3), np.nan)
+        vertex_surface_normal = np.tile(normal, (len(vertices), 1))
+        
+        if len(locations) > 0:
+            # Group hits by ray (vertex) index and find closest hit for each
+            for hit_idx in range(len(locations)):
+                v_idx = index_ray[hit_idx]
+                hit_point = locations[hit_idx]
+                tri_idx = index_tri[hit_idx]
+                
+                # Distance from ray origin to hit
+                dist = np.linalg.norm(hit_point - ray_origins[v_idx])
+                
+                # Check if this is the first hit or closer than previous
+                if np.isnan(vertex_surface_pos[v_idx, 0]):
+                    vertex_surface_pos[v_idx] = hit_point
+                    vertex_surface_normal[v_idx] = target_mesh.face_normals[tri_idx]
+                else:
+                    prev_dist = np.linalg.norm(vertex_surface_pos[v_idx] - ray_origins[v_idx])
+                    if dist < prev_dist:
+                        vertex_surface_pos[v_idx] = hit_point
+                        vertex_surface_normal[v_idx] = target_mesh.face_normals[tri_idx]
+        
+        # For vertices that missed (ray didn't hit surface), use nearest point on surface
+        missed_mask = np.isnan(vertex_surface_pos[:, 0])
+        n_missed = np.sum(missed_mask)
+        if n_missed > 0:
+            print(f"Warning: {n_missed} vertices missed surface, using nearest point fallback")
+            missed_indices = np.where(missed_mask)[0]
+            query_points = tangent_positions[missed_indices]
+            
+            try:
+                closest_points, distances, face_ids = target_mesh.nearest.on_surface(query_points)
+                for i, v_idx in enumerate(missed_indices):
+                    vertex_surface_pos[v_idx] = closest_points[i]
+                    if face_ids[i] < len(target_mesh.face_normals):
+                        vertex_surface_normal[v_idx] = target_mesh.face_normals[face_ids[i]]
+            except Exception as e:
+                print(f"Nearest point fallback failed: {e}")
+                # Last resort: use tangent plane positions
+                vertex_surface_pos[missed_mask] = tangent_positions[missed_mask]
+        
+        # Normalize surface normals
+        norms = np.linalg.norm(vertex_surface_normal, axis=1, keepdims=True)
+        norms = np.where(norms > 0, norms, 1.0)  # Avoid division by zero
+        vertex_surface_normal = vertex_surface_normal / norms
+        
+        # Depth mapping: position vertices relative to the actual surface
+        # tz_all = 0: bottom of extrusion (goes INTO surface by 'depth' mm)
+        # tz_all = 1: top of extrusion (goes OUTWARD from surface)
+        # 
+        # CRITICAL FIX: The cutting tool must extend FAR outside the surface
+        # to ensure complete boolean cuts through any surface curvature variations.
+        # Using 100mm outward extension guarantees the tool is always outside.
+        max_inward = depth  # How deep into the surface
+        max_outward = 100.0  # How far outside (INCREASED for reliable boolean cuts)
         total_range = max_inward + max_outward
         
-        # Process vertices in batch
-        for v_idx in range(len(vertices)):
-            tx = tx_all[v_idx]
-            ty = ty_all[v_idx]
-            z_normalized = tz_all[v_idx]
-            
-            # Bilinear interpolation indices
-            sample_idx_x = tx * (num_samples_x - 1)
-            sample_idx_y = ty * (num_samples_y - 1)
-            
-            ix_low = int(sample_idx_x)
-            ix_high = min(ix_low + 1, num_samples_x - 1)
-            fx = sample_idx_x - ix_low
-            
-            iy_low = int(sample_idx_y)
-            iy_high = min(iy_low + 1, num_samples_y - 1)
-            fy = sample_idx_y - iy_low
-            
-            # Bilinear interpolation of surface position
-            p00 = np.array(sample_grid_positions[iy_low][ix_low])
-            p10 = np.array(sample_grid_positions[iy_low][ix_high])
-            p01 = np.array(sample_grid_positions[iy_high][ix_low])
-            p11 = np.array(sample_grid_positions[iy_high][ix_high])
-            
-            surf_pos = (1 - fx) * (1 - fy) * p00 + fx * (1 - fy) * p10 + (1 - fx) * fy * p01 + fx * fy * p11
-            
-            # Bilinear interpolation of surface normal
-            n00 = np.array(sample_grid_normals[iy_low][ix_low])
-            n10 = np.array(sample_grid_normals[iy_low][ix_high])
-            n01 = np.array(sample_grid_normals[iy_high][ix_low])
-            n11 = np.array(sample_grid_normals[iy_high][ix_high])
-            
-            local_normal = (1 - fx) * (1 - fy) * n00 + fx * (1 - fy) * n10 + (1 - fx) * fy * n01 + fx * fy * n11
-            norm_len = np.linalg.norm(local_normal)
-            if norm_len > 0:
-                local_normal = local_normal / norm_len
-            else:
-                local_normal = normal
-            
-            # Map Z position to depth
-            distance_from_surface = -max_inward + z_normalized * total_range
-            new_vertices[v_idx] = surf_pos + local_normal * distance_from_surface
+        # distance_from_surface: negative = inside, positive = outside
+        distance_from_surface = -max_inward + tz_all * total_range
+        
+        # Compute final vertex positions
+        new_vertices = vertex_surface_pos + vertex_surface_normal * distance_from_surface[:, np.newaxis]
         
         flat_mesh.vertices = new_vertices
         
