@@ -16,6 +16,7 @@ import numpy as np
 import trimesh
 from typing import Tuple, Optional, List
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 # Define simple 3D letter shapes as 2D polygons (to be extruded)
@@ -745,6 +746,8 @@ class OrthosisProcessor:
         Apply logo engraving only to both L and R versions.
         If logo was already applied, restores mesh first to prevent overlap.
         
+        OPTIMIZED: Uses parallel processing for L/R sides when possible.
+        
         Args:
             position: 3D position for logo placement
             normal: Surface normal at the position
@@ -757,6 +760,9 @@ class OrthosisProcessor:
         Returns:
             Tuple of (left_engraved, right_engraved)
         """
+        import time
+        start_time = time.perf_counter()
+        
         if self._pristine_mesh is None:
             raise ValueError("No orthosis loaded")
         if self.logo_mesh is None:
@@ -777,60 +783,64 @@ class OrthosisProcessor:
         print(f"Logo mesh original bounds: {self.logo_mesh.bounds}")
         print(f"Logo mesh original size: {self.logo_mesh.bounds[1] - self.logo_mesh.bounds[0]}")
         
-        # --- Process RIGHT version (original) ---
-        right_mesh = self.orthosis_original.copy()
-        
-        # Apply logo to right mesh with offsets
-        logo_copy = self.logo_mesh.copy()
-        
-        # Apply scale
+        # Prepare logo copies for both sides
+        # RIGHT side logo
+        logo_copy_right = self.logo_mesh.copy()
         if scale != 1.0:
             scale_matrix = np.diag([scale, scale, 1, 1])
-            logo_copy.apply_transform(scale_matrix)
-        
-        # Apply rotation around Z axis before placement
+            logo_copy_right.apply_transform(scale_matrix)
         if rotation != 0:
             rot_rad = np.radians(rotation)
             rot_matrix = trimesh.transformations.rotation_matrix(rot_rad, [0, 0, 1])
-            logo_copy.apply_transform(rot_matrix)
+            logo_copy_right.apply_transform(rot_matrix)
         
-        # Apply offsets in local tangent plane
-        offset_pos = self._apply_tangent_offset(position, normal, offset_x, offset_y)
-        
-        right_mesh = self._apply_logo_to_mesh(
-            right_mesh, 
-            logo_copy,
-            offset_pos,
-            normal,
-            engrave_depth
-        )
-        
-        # --- Process LEFT version ---
-        # Mirror the original mesh first
-        left_mesh = self.mirror_orthosis(self.orthosis_original, axis='y')
-        
-        # Mirror the position (Y axis)
-        logo_pos_mirrored = self._mirror_point(offset_pos, 'y')
-        logo_normal_mirrored = self._mirror_point(normal, 'y')
-        
-        # Create a fresh logo copy for left side (NOT mirrored - logo should be readable)
+        # LEFT side logo (NOT mirrored - logo should be readable)
         logo_copy_left = self.logo_mesh.copy()
         if scale != 1.0:
             scale_matrix = np.diag([scale, scale, 1, 1])
             logo_copy_left.apply_transform(scale_matrix)
-        # NEGATE rotation for mirrored side so they rotate in opposite directions
+        # NEGATE rotation for mirrored side
         if rotation != 0:
-            rot_rad = np.radians(-rotation)  # Negative rotation for mirrored side
+            rot_rad = np.radians(-rotation)
             rot_matrix = trimesh.transformations.rotation_matrix(rot_rad, [0, 0, 1])
             logo_copy_left.apply_transform(rot_matrix)
         
-        left_mesh = self._apply_logo_to_mesh(
-            left_mesh,
-            logo_copy_left,
-            logo_pos_mirrored,
-            logo_normal_mirrored,
-            engrave_depth
-        )
+        # Prepare meshes and positions
+        right_mesh = self.orthosis_original.copy()
+        left_mesh = self.mirror_orthosis(self.orthosis_original, axis='y')
+        
+        offset_pos = self._apply_tangent_offset(position, normal, offset_x, offset_y)
+        logo_pos_mirrored = self._mirror_point(offset_pos, 'y')
+        logo_normal_mirrored = self._mirror_point(normal, 'y')
+        
+        # Process both sides in parallel for potential speedup
+        def process_right():
+            return self._apply_logo_to_mesh(
+                right_mesh, 
+                logo_copy_right,
+                offset_pos,
+                normal,
+                engrave_depth
+            )
+        
+        def process_left():
+            return self._apply_logo_to_mesh(
+                left_mesh,
+                logo_copy_left,
+                logo_pos_mirrored,
+                logo_normal_mirrored,
+                engrave_depth
+            )
+        
+        # Use ThreadPoolExecutor for parallel processing
+        # Note: Due to Python GIL, this mainly helps with I/O-bound operations
+        # The MeshLib boolean operations release GIL so we get some benefit
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_right = executor.submit(process_right)
+            future_left = executor.submit(process_left)
+            
+            right_mesh = future_right.result()
+            left_mesh = future_left.result()
         
         # Store results
         self.orthosis_mirrored = left_mesh
@@ -841,6 +851,9 @@ class OrthosisProcessor:
         # Save state after logo for text reset
         self._mesh_after_logo = right_mesh.copy()
         self._mirrored_after_logo = left_mesh.copy()
+        
+        elapsed = time.perf_counter() - start_time
+        print(f"Logo applied in {elapsed*1000:.1f}ms (parallel L/R)")
         
         # If text was previously applied, reapply it with stored parameters
         if self._last_text_params is not None:
@@ -893,6 +906,8 @@ class OrthosisProcessor:
         Apply text engraving only to both L and R versions.
         If text was already applied, restores mesh first to prevent overlap.
         
+        OPTIMIZED: Uses parallel processing for L/R sides.
+        
         Args:
             text: Text to engrave
             position: 3D position for text placement
@@ -906,6 +921,9 @@ class OrthosisProcessor:
         Returns:
             Tuple of (left_engraved, right_engraved)
         """
+        import time
+        start_time = time.perf_counter()
+        
         if self._pristine_mesh is None:
             raise ValueError("No orthosis loaded")
         
@@ -927,37 +945,44 @@ class OrthosisProcessor:
         # Apply offsets in local tangent plane
         offset_pos = self._apply_tangent_offset(position, normal, offset_x, offset_y)
         
-        # --- Process RIGHT version ---
+        # Prepare meshes
         right_mesh = self.orthosis_original.copy()
-        right_mesh = self._apply_text_to_mesh_with_params(
-            right_mesh,
-            text,
-            offset_pos,
-            normal,
-            rotation,
-            font_size,
-            depth
-        )
-        
-        # --- Process LEFT version ---
-        # Mirror the original mesh (with logo if applied)
         left_mesh = self.orthosis_mirrored.copy()
         
         # Mirror the position (Y axis)
         text_pos_mirrored = self._mirror_point(offset_pos, 'y')
         text_normal_mirrored = self._mirror_point(normal, 'y')
         
-        # Apply text to left mesh (text itself is NOT mirrored - should be readable)
-        # NEGATE rotation for mirrored side so they rotate in opposite directions
-        left_mesh = self._apply_text_to_mesh_with_params(
-            left_mesh,
-            text,
-            text_pos_mirrored,
-            text_normal_mirrored,
-            -rotation,  # Negative rotation for mirrored side
-            font_size,
-            depth
-        )
+        # Process both sides in parallel
+        def process_right():
+            return self._apply_text_to_mesh_with_params(
+                right_mesh,
+                text,
+                offset_pos,
+                normal,
+                rotation,
+                font_size,
+                depth
+            )
+        
+        def process_left():
+            return self._apply_text_to_mesh_with_params(
+                left_mesh,
+                text,
+                text_pos_mirrored,
+                text_normal_mirrored,
+                -rotation,  # Negative rotation for mirrored side
+                font_size,
+                depth
+            )
+        
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_right = executor.submit(process_right)
+            future_left = executor.submit(process_left)
+            
+            right_mesh = future_right.result()
+            left_mesh = future_left.result()
         
         # Store results
         self.orthosis_mirrored = left_mesh
@@ -976,6 +1001,9 @@ class OrthosisProcessor:
             'font_size': font_size,
             'depth': depth
         }
+        
+        elapsed = time.perf_counter() - start_time
+        print(f"Text applied in {elapsed*1000:.1f}ms (parallel L/R)")
         
         return (left_mesh, right_mesh)
     
@@ -1065,6 +1093,8 @@ class OrthosisProcessor:
         the surface curvature, but uses a SINGLE normal direction for the depth
         to ensure flat-bottomed engravings without stair-step artifacts.
         
+        OPTIMIZED: Uses fully vectorized NumPy operations for vertex transformation.
+        
         Args:
             flat_mesh: Flat mesh (in XY plane, extruded in Z)
             target_mesh: The mesh surface to conform to
@@ -1075,6 +1105,9 @@ class OrthosisProcessor:
         Returns:
             Transformed mesh wrapped to surface
         """
+        import time
+        start_time = time.perf_counter()
+        
         # Get mesh dimensions
         bounds = flat_mesh.bounds
         mesh_width = bounds[1][0] - bounds[0][0]
@@ -1082,7 +1115,7 @@ class OrthosisProcessor:
         mesh_depth_orig = bounds[1][2] - bounds[0][2]
         
         print(f"Mesh dimensions: width={mesh_width:.1f}, height={mesh_height:.1f}, depth={mesh_depth_orig:.1f}")
-        print(f"Engraving depth: {depth:.2f}mm")
+        print(f"Engraving depth: {depth:.2f}mm, vertices: {len(flat_mesh.vertices)}")
         
         # Normalize the surface normal (points outward from surface)
         normal = surface_normal / np.linalg.norm(surface_normal)
@@ -1104,120 +1137,117 @@ class OrthosisProcessor:
         cross_check = np.cross(mesh_right, mesh_up)
         is_mirrored = np.dot(cross_check, normal) < 0
         
-        # === GRID-BASED SURFACE SAMPLING ===
-        # Sample the surface at a grid of points to capture curvature
-        num_samples_x = 25
-        num_samples_y = 20
+        # === ADAPTIVE GRID DENSITY ===
+        # Use fewer samples for smaller meshes (optimization)
+        min_samples = 10
+        max_samples = 30
+        samples_per_mm = 0.5  # Target ~2mm spacing between samples
         
-        # Create sample grid in the tangent plane
-        sample_rays_origins = []
-        sample_grid_coords = []
+        num_samples_x = int(np.clip(mesh_width * samples_per_mm, min_samples, max_samples))
+        num_samples_y = int(np.clip(mesh_height * samples_per_mm, min_samples, max_samples))
         
-        for j in range(num_samples_y):
-            ty = (j / (num_samples_y - 1)) - 0.5  # -0.5 to 0.5
-            y_offset = ty * mesh_height * 1.2  # Slightly larger than mesh
-            
-            for i in range(num_samples_x):
-                tx = (i / (num_samples_x - 1)) - 0.5  # -0.5 to 0.5
-                x_offset = tx * mesh_width * 1.2  # Slightly larger than mesh
-                
-                # Point in tangent plane
-                sample_point = center_pos + mesh_right * x_offset + mesh_up * y_offset
-                # Ray origin: far outside along normal
-                ray_origin = sample_point + normal * 100.0
-                
-                sample_rays_origins.append(ray_origin)
-                sample_grid_coords.append((i, j, x_offset, y_offset))
+        print(f"Using adaptive grid: {num_samples_x}x{num_samples_y} samples")
+        
+        # === VECTORIZED GRID CREATION ===
+        # Create normalized grid coordinates using meshgrid
+        tx_1d = np.linspace(-0.5, 0.5, num_samples_x)
+        ty_1d = np.linspace(-0.5, 0.5, num_samples_y)
+        tx_grid, ty_grid = np.meshgrid(tx_1d, ty_1d)  # Shape: (num_samples_y, num_samples_x)
+        
+        # Compute offsets
+        x_offsets = tx_grid.ravel() * mesh_width * 1.2  # Flatten for ray casting
+        y_offsets = ty_grid.ravel() * mesh_height * 1.2
+        
+        # Vectorized ray origin computation
+        # sample_points = center_pos + mesh_right * x_offset + mesh_up * y_offset
+        num_rays = num_samples_x * num_samples_y
+        sample_points = (center_pos.reshape(1, 3) + 
+                        np.outer(x_offsets, mesh_right) + 
+                        np.outer(y_offsets, mesh_up))
+        ray_origins = sample_points + normal * 100.0  # Shape: (num_rays, 3)
+        ray_directions = np.tile(-normal, (num_rays, 1))
         
         # Batch ray cast to find surface positions
-        ray_origins = np.array(sample_rays_origins)
-        ray_directions = np.tile(-normal, (len(ray_origins), 1))
-        
         locations, index_ray, index_tri = target_mesh.ray.intersects_location(
             ray_origins=ray_origins,
             ray_directions=ray_directions
         )
         
-        # Build surface position grid
-        # Initialize with fallback positions (on tangent plane at center_pos height)
-        surface_grid = [[None for _ in range(num_samples_x)] for _ in range(num_samples_y)]
+        # === VECTORIZED GRID BUILDING ===
+        # Initialize grid with fallback positions (tangent plane)
+        surface_grid = sample_points.reshape(num_samples_y, num_samples_x, 3).copy()
         
-        for idx, (i, j, x_off, y_off) in enumerate(sample_grid_coords):
-            # Default: point on tangent plane
-            surface_grid[j][i] = center_pos + mesh_right * x_off + mesh_up * y_off
-        
-        # Find closest hit for each ray
-        ray_hits = {}
-        for hit_idx in range(len(locations)):
-            ray_idx = index_ray[hit_idx]
-            hit_point = locations[hit_idx]
-            dist = np.linalg.norm(hit_point - ray_origins[ray_idx])
+        if len(locations) > 0:
+            # Find closest hit for each ray using vectorized operations
+            # Compute distances for all hits
+            hit_distances = np.linalg.norm(locations - ray_origins[index_ray], axis=1)
             
-            if ray_idx not in ray_hits or dist < ray_hits[ray_idx][0]:
-                ray_hits[ray_idx] = (dist, hit_point)
+            # For each ray, find the minimum distance hit
+            # Use pandas-style groupby approach with numpy
+            unique_rays = np.unique(index_ray)
+            for ray_idx in unique_rays:
+                mask = index_ray == ray_idx
+                if np.any(mask):
+                    min_idx = np.argmin(hit_distances[mask])
+                    hit_point = locations[mask][min_idx]
+                    # Convert flat index to grid indices
+                    gy = ray_idx // num_samples_x
+                    gx = ray_idx % num_samples_x
+                    surface_grid[gy, gx] = hit_point
         
-        # Update grid with actual surface hits
-        for idx, (i, j, x_off, y_off) in enumerate(sample_grid_coords):
-            if idx in ray_hits:
-                surface_grid[j][i] = ray_hits[idx][1]
+        ray_time = time.perf_counter() - start_time
+        print(f"Ray casting completed in {ray_time*1000:.1f}ms, {len(locations)} hits")
         
-        # === VERTEX TRANSFORMATION ===
+        # === FULLY VECTORIZED VERTEX TRANSFORMATION ===
         # Get original mesh bounds for mapping
         x_min, x_max = bounds[0][0], bounds[1][0]
         y_min, y_max = bounds[0][1], bounds[1][1]
         z_min, z_max = bounds[0][2], bounds[1][2]
         
-        x_range = x_max - x_min if x_max > x_min else 1.0
-        y_range = y_max - y_min if y_max > y_min else 1.0
-        z_range = z_max - z_min if z_max > z_min else 1.0
+        x_range = max(x_max - x_min, 1e-6)
+        y_range = max(y_max - y_min, 1e-6)
+        z_range = max(z_max - z_min, 1e-6)
         
-        vertices = flat_mesh.vertices.copy()
-        new_vertices = np.zeros_like(vertices)
+        vertices = flat_mesh.vertices  # No copy needed, we create new array
         
-        # Outward extension for clean boolean cuts
+        # Normalize all vertices to 0-1 range (vectorized)
+        tx = np.clip((vertices[:, 0] - x_min) / x_range, 0, 1)
+        ty = np.clip((vertices[:, 1] - y_min) / y_range, 0, 1)
+        tz = (vertices[:, 2] - z_min) / z_range
+        
+        # Bilinear interpolation indices (vectorized)
+        gx = tx * (num_samples_x - 1)
+        gy = ty * (num_samples_y - 1)
+        
+        ix = np.clip(gx.astype(np.int32), 0, num_samples_x - 2)
+        iy = np.clip(gy.astype(np.int32), 0, num_samples_y - 2)
+        
+        fx = gx - ix
+        fy = gy - iy
+        
+        # Gather grid points for bilinear interpolation (vectorized)
+        p00 = surface_grid[iy, ix]          # (N, 3)
+        p10 = surface_grid[iy, ix + 1]      # (N, 3)
+        p01 = surface_grid[iy + 1, ix]      # (N, 3)
+        p11 = surface_grid[iy + 1, ix + 1]  # (N, 3)
+        
+        # Bilinear interpolation weights
+        w00 = ((1 - fx) * (1 - fy)).reshape(-1, 1)
+        w10 = (fx * (1 - fy)).reshape(-1, 1)
+        w01 = ((1 - fx) * fy).reshape(-1, 1)
+        w11 = (fx * fy).reshape(-1, 1)
+        
+        # Interpolated surface positions (vectorized)
+        surf_pos = w00 * p00 + w10 * p10 + w01 * p01 + w11 * p11
+        
+        # Map Z to depth using SINGLE normal (for flat bottom)
+        # tz=0 (bottom of extrusion) -> depth INTO surface
+        # tz=1 (top of extrusion) -> outward_extension OUTSIDE surface
         outward_extension = 50.0
+        z_offset = -depth + tz * (depth + outward_extension)
         
-        for v_idx in range(len(vertices)):
-            # Normalize vertex position to 0-1 range
-            tx = (vertices[v_idx, 0] - x_min) / x_range  # 0 to 1
-            ty = (vertices[v_idx, 1] - y_min) / y_range  # 0 to 1
-            tz = (vertices[v_idx, 2] - z_min) / z_range  # 0 to 1
-            
-            # Clamp to grid bounds
-            tx = np.clip(tx, 0, 1)
-            ty = np.clip(ty, 0, 1)
-            
-            # Bilinear interpolation indices
-            gx = tx * (num_samples_x - 1)
-            gy = ty * (num_samples_y - 1)
-            
-            ix = int(gx)
-            iy = int(gy)
-            ix = min(ix, num_samples_x - 2)
-            iy = min(iy, num_samples_y - 2)
-            
-            fx = gx - ix
-            fy = gy - iy
-            
-            # Bilinear interpolation of surface position
-            p00 = surface_grid[iy][ix]
-            p10 = surface_grid[iy][ix + 1]
-            p01 = surface_grid[iy + 1][ix]
-            p11 = surface_grid[iy + 1][ix + 1]
-            
-            surf_pos = (
-                (1 - fx) * (1 - fy) * p00 +
-                fx * (1 - fy) * p10 +
-                (1 - fx) * fy * p01 +
-                fx * fy * p11
-            )
-            
-            # Map Z to depth using SINGLE normal (for flat bottom)
-            # tz=0 (bottom of extrusion) -> depth INTO surface
-            # tz=1 (top of extrusion) -> outward_extension OUTSIDE surface
-            z_offset = -depth + tz * (depth + outward_extension)
-            
-            new_vertices[v_idx] = surf_pos + normal * z_offset
+        # Final vertex positions (vectorized)
+        new_vertices = surf_pos + np.outer(z_offset, normal)
         
         flat_mesh.vertices = new_vertices
         
@@ -1243,6 +1273,9 @@ class OrthosisProcessor:
             flat_mesh.fix_normals()
         except:
             pass
+        
+        total_time = time.perf_counter() - start_time
+        print(f"Surface wrapping completed in {total_time*1000:.1f}ms")
         
         return flat_mesh
     
