@@ -1059,44 +1059,43 @@ class OrthosisProcessor:
                               surface_normal: np.ndarray,
                               depth: float) -> trimesh.Trimesh:
         """
-        Wrap/conform a flat mesh (logo/text) to follow the curved surface.
+        Position a flat mesh (logo/text) for engraving on a curved surface.
         
-        OPTIMIZED VERSION: Uses grid-based sampling with smooth bilinear interpolation
-        for clean edges, combined with large outward extension for reliable boolean cuts.
+        SIMPLIFIED VERSION: Instead of warping the mesh to follow surface curvature,
+        we position the flat cutting tool perpendicular to the surface normal.
+        This creates clean, flat-bottomed engravings without mesh corruption.
         
-        Key features:
-        1. Grid-based sampling (20x15) with smooth bilinear interpolation
-        2. Large outward extension (100mm) for complete boolean cuts on curved surfaces
-        3. Fully vectorized operations for speed
-        4. Smooth interpolation prevents jagged/pixelated edges
+        The cutting tool extends:
+        - Inward: by 'depth' mm (the visible engraving depth)
+        - Outward: by 100mm (to ensure clean boolean cuts through any surface curvature)
         
         Args:
             flat_mesh: Flat mesh (in XY plane, extruded in Z)
-            target_mesh: The mesh surface to conform to
+            target_mesh: The mesh surface to conform to (used for reference only)
             center_pos: Center position on the surface
             surface_normal: Normal vector at the center position
             depth: Engraving depth in mm
             
         Returns:
-            Transformed mesh wrapped to surface
+            Transformed mesh positioned for engraving
         """
         # Get mesh dimensions
         bounds = flat_mesh.bounds
-        mesh_width = bounds[1][0] - bounds[0][0]   # X extent
-        mesh_height = bounds[1][1] - bounds[0][1]  # Y extent
-        mesh_depth = bounds[1][2] - bounds[0][2]   # Z extent (extrusion)
+        mesh_width = bounds[1][0] - bounds[0][0]
+        mesh_height = bounds[1][1] - bounds[0][1]
+        mesh_depth_orig = bounds[1][2] - bounds[0][2]
         
-        print(f"Mesh dimensions: width={mesh_width:.1f}, height={mesh_height:.1f}, depth={mesh_depth:.1f}")
+        print(f"Mesh dimensions: width={mesh_width:.1f}, height={mesh_height:.1f}, depth={mesh_depth_orig:.1f}")
         
         # Normalize the surface normal (points outward from surface)
         normal = surface_normal / np.linalg.norm(surface_normal)
         
-        # Determine coordinate frame for placement
-        # Logo should ALWAYS be STRICTLY HORIZONTAL - parallel to XY plane
+        # Build a coordinate frame for positioning
+        # mesh_up: always world Z (horizontal text)
+        # mesh_right: perpendicular to normal and up
         world_up = np.array([0.0, 0.0, 1.0])
         mesh_up = world_up.copy()
         
-        # mesh_right is perpendicular to both normal and mesh_up
         mesh_right = np.cross(mesh_up, normal)
         if np.linalg.norm(mesh_right) < 0.001:
             mesh_right = np.array([1.0, 0.0, 0.0])
@@ -1110,146 +1109,70 @@ class OrthosisProcessor:
         cross_check = np.cross(mesh_right, mesh_up)
         is_mirrored = np.dot(cross_check, normal) < 0
         
-        # Grid-based sampling for smooth interpolation
-        num_samples_x = 20
-        num_samples_y = 15
+        # Create rotation matrix to orient the flat mesh
+        # Original mesh: X = width, Y = height, Z = depth (extrusion)
+        # Target: X -> mesh_right, Y -> mesh_up, Z -> -normal (into surface)
+        rotation_matrix = np.eye(4)
+        rotation_matrix[:3, 0] = mesh_right      # X axis -> mesh_right
+        rotation_matrix[:3, 1] = mesh_up         # Y axis -> mesh_up  
+        rotation_matrix[:3, 2] = -normal         # Z axis -> into surface
         
-        # Create sample grid points in BATCH for efficient ray casting
-        sample_origins = []
-        sample_params = []  # Store (i, j) for each sample
-        
-        for j in range(num_samples_y):
-            ty = (j / (num_samples_y - 1)) - 0.5
-            height_sample_offset = ty * mesh_height * 1.1
-            
-            for i in range(num_samples_x):
-                tx = (i / (num_samples_x - 1)) - 0.5
-                width_sample_offset = tx * mesh_width * 1.1
-                
-                sample_point = center_pos + mesh_right * width_sample_offset + mesh_up * height_sample_offset
-                ray_origin = sample_point + normal * 150  # Start far outside
-                
-                sample_origins.append(ray_origin)
-                sample_params.append((i, j, sample_point))
-        
-        # BATCH ray cast for efficiency
-        sample_origins = np.array(sample_origins)
-        ray_directions = np.tile(-normal, (len(sample_origins), 1))
-        
-        locations, index_ray, index_tri = target_mesh.ray.intersects_location(
-            ray_origins=sample_origins,
-            ray_directions=ray_directions
-        )
-        
-        # Build result grid (positions only - we use a single consistent normal)
-        sample_grid_positions = [[None for _ in range(num_samples_x)] for _ in range(num_samples_y)]
-        
-        # Initialize with projected points
-        for idx, (i, j, sample_point) in enumerate(sample_params):
-            sample_grid_positions[j][i] = sample_point.copy()
-        
-        # Process ray hits - find closest hit for each ray
-        ray_best_dist = {}  # ray_idx -> best distance
-        ray_best_hit = {}   # ray_idx -> hit_point
-        
-        for hit_idx in range(len(locations)):
-            ray_idx = index_ray[hit_idx]
-            hit_point = locations[hit_idx]
-            dist = np.linalg.norm(hit_point - sample_origins[ray_idx])
-            
-            if ray_idx not in ray_best_dist or dist < ray_best_dist[ray_idx]:
-                ray_best_dist[ray_idx] = dist
-                ray_best_hit[ray_idx] = hit_point
-        
-        # Apply best hits to grid
-        for idx, (i, j, sample_point) in enumerate(sample_params):
-            if idx in ray_best_hit:
-                sample_grid_positions[j][i] = ray_best_hit[idx]
-        
-        # Get the original mesh bounds for mapping
-        x_min, x_max = bounds[0][0], bounds[1][0]
-        y_min, y_max = bounds[0][1], bounds[1][1]
-        z_min, z_max = bounds[0][2], bounds[1][2]
-        x_range = x_max - x_min if x_max > x_min else 1.0
-        y_range = y_max - y_min if y_max > y_min else 1.0
-        z_range = z_max - z_min if z_max > z_min else 1.0
-        
-        # Vectorized vertex transformation
+        # Center the mesh at origin first
         vertices = flat_mesh.vertices.copy()
-        new_vertices = np.zeros_like(vertices)
+        mesh_center = (bounds[0] + bounds[1]) / 2
+        vertices -= mesh_center
         
-        # Compute normalized positions for all vertices at once
-        tx_all = np.clip((vertices[:, 0] - x_min) / x_range, 0, 1)
-        ty_all = np.clip((vertices[:, 1] - y_min) / y_range, 0, 1)
-        tz_all = (vertices[:, 2] - z_min) / z_range if z_range > 0 else np.zeros(len(vertices))
+        # Apply rotation
+        vertices_rotated = vertices @ rotation_matrix[:3, :3].T
         
-        # CRITICAL: Large outward extension for complete boolean cuts
-        max_inward = depth
-        max_outward = 100.0  # Large enough to ensure clean cuts through any curvature
-        total_range = max_inward + max_outward
+        # Scale Z to create proper cutting tool:
+        # Original Z range maps to: surface + depth (inside) to surface - 100mm (outside)
+        z_min_orig = bounds[0][2] - mesh_center[2]
+        z_max_orig = bounds[1][2] - mesh_center[2]
+        z_range_orig = z_max_orig - z_min_orig if z_max_orig > z_min_orig else 1.0
         
-        # IMPORTANT: Use a SINGLE consistent normal for the entire cutting tool
-        # This ensures the engraved surface (bottom) is perfectly FLAT, not wavy.
-        # Using per-vertex interpolated normals causes "stair-step" artifacts because
-        # vertices at different XY positions would extend in slightly different directions.
-        # The surface curvature is already captured in the interpolated surface positions.
-        engraving_normal = normal  # Use the center normal for all vertices
+        # New Z range: from +depth (into surface) to -100mm (outside surface)
+        # z=0 in original -> on surface
+        # z=z_min_orig -> deepest point (goes INTO surface by depth)
+        # z=z_max_orig -> outer point (goes OUTSIDE surface by 100mm)
+        for i in range(len(vertices_rotated)):
+            # Get original z position (before rotation)
+            z_orig = vertices[i, 2]
+            z_normalized = (z_orig - z_min_orig) / z_range_orig  # 0 to 1
+            
+            # Map to new range: depth (inside) to -100mm (outside)
+            # z_normalized=0 -> +depth (deepest into surface)
+            # z_normalized=1 -> -100mm (far outside)
+            new_z = depth - z_normalized * (depth + 100.0)
+            
+            # Apply this as offset along the normal direction
+            # The rotated vertex already has the right XY position
+            # We just need to adjust its position along the normal
+            vertices_rotated[i] = vertices_rotated[i] + normal * new_z
         
-        # Process vertices with vectorized bilinear interpolation
-        for v_idx in range(len(vertices)):
-            tx = tx_all[v_idx]
-            ty = ty_all[v_idx]
-            z_normalized = tz_all[v_idx]
-            
-            # Bilinear interpolation indices
-            sample_idx_x = tx * (num_samples_x - 1)
-            sample_idx_y = ty * (num_samples_y - 1)
-            
-            ix_low = int(sample_idx_x)
-            ix_high = min(ix_low + 1, num_samples_x - 1)
-            fx = sample_idx_x - ix_low
-            
-            iy_low = int(sample_idx_y)
-            iy_high = min(iy_low + 1, num_samples_y - 1)
-            fy = sample_idx_y - iy_low
-            
-            # Bilinear interpolation of surface position (where the cutting edge meets surface)
-            p00 = np.array(sample_grid_positions[iy_low][ix_low])
-            p10 = np.array(sample_grid_positions[iy_low][ix_high])
-            p01 = np.array(sample_grid_positions[iy_high][ix_low])
-            p11 = np.array(sample_grid_positions[iy_high][ix_high])
-            
-            surf_pos = (1 - fx) * (1 - fy) * p00 + fx * (1 - fy) * p10 + (1 - fx) * fy * p01 + fx * fy * p11
-            
-            # Map Z position to depth using CONSISTENT normal direction
-            # This ensures flat engraving bottoms without stair-step artifacts
-            distance_from_surface = -max_inward + z_normalized * total_range
-            new_vertices[v_idx] = surf_pos + engraving_normal * distance_from_surface
+        # Translate to center position
+        vertices_final = vertices_rotated + center_pos
         
-        flat_mesh.vertices = new_vertices
+        flat_mesh.vertices = vertices_final
         
-        # If the coordinate frame is mirrored (left side), we need to flip the faces
-        # to maintain correct winding order for the boolean operation
+        # If the coordinate frame is mirrored, flip face winding
         if is_mirrored:
-            # Flip face winding by reversing the vertex order in each face
             flat_mesh.faces = flat_mesh.faces[:, ::-1]
             print("Flipped face winding for mirrored coordinate frame")
         
-        # Fix normals after deformation - this is critical for boolean operations
+        # Fix normals after transformation
         try:
             flat_mesh.fix_normals()
         except:
             pass
         
-        # Check if the mesh is watertight and fix if needed
+        # Ensure mesh is watertight
         if not flat_mesh.is_watertight:
             try:
-                # Fill holes if any
                 trimesh.repair.fill_holes(flat_mesh)
             except:
                 pass
         
-        # Ensure consistent winding
         try:
             flat_mesh.fix_normals()
         except:
@@ -1398,19 +1321,6 @@ class OrthosisProcessor:
                     print(f"Boolean error: {result.errorString}")
                 
                 if is_valid and num_faces > 0:
-                    # Apply local remeshing to improve mesh quality at cut edges
-                    # This eliminates thin/elongated triangles that cause visible striations
-                    try:
-                        remesh_settings = mr.RemeshSettings()
-                        remesh_settings.targetEdgeLen = 0.5  # Target edge length in mm
-                        remesh_settings.maxEdgeSplits = 10000
-                        remesh_settings.finalRelaxIters = 3
-                        remesh_settings.packMesh = True
-                        mr.remesh(result.mesh, remesh_settings)
-                        print(f"Remeshed to improve quality: {result.mesh.topology.numValidFaces()} faces")
-                    except Exception as remesh_err:
-                        print(f"Remesh skipped: {remesh_err}")
-                    
                     mr.saveMesh(result.mesh, result_path)
                     result_mesh = trimesh.load(result_path, force='mesh')
                     if result_mesh is not None and hasattr(result_mesh, 'vertices') and len(result_mesh.vertices) > 0:
@@ -1430,14 +1340,6 @@ class OrthosisProcessor:
                         
                         result2 = mr.boolean(target_mr, tool_mr, mr.BooleanOperation.DifferenceAB)
                         if result2.valid() and result2.mesh.topology.numValidFaces() > 0:
-                            # Remesh to improve quality
-                            try:
-                                remesh_settings = mr.RemeshSettings()
-                                remesh_settings.targetEdgeLen = 0.5
-                                remesh_settings.finalRelaxIters = 3
-                                mr.remesh(result2.mesh, remesh_settings)
-                            except:
-                                pass
                             mr.saveMesh(result2.mesh, result_path)
                             result_mesh = trimesh.load(result_path, force='mesh')
                             if result_mesh is not None and hasattr(result_mesh, 'vertices') and len(result_mesh.vertices) > 0:
@@ -1464,14 +1366,6 @@ class OrthosisProcessor:
                         
                         result3 = mr.boolean(target_mr, tool_mr2, mr.BooleanOperation.DifferenceAB)
                         if result3.valid() and result3.mesh.topology.numValidFaces() > 0:
-                            # Remesh to improve quality
-                            try:
-                                remesh_settings = mr.RemeshSettings()
-                                remesh_settings.targetEdgeLen = 0.5
-                                remesh_settings.finalRelaxIters = 3
-                                mr.remesh(result3.mesh, remesh_settings)
-                            except:
-                                pass
                             mr.saveMesh(result3.mesh, result_path)
                             result_mesh = trimesh.load(result_path, force='mesh')
                             if result_mesh is not None and hasattr(result_mesh, 'vertices') and len(result_mesh.vertices) > 0:
