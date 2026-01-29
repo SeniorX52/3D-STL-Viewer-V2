@@ -1394,7 +1394,7 @@ class OrthosisProcessor:
                               mesh: trimesh.Trimesh,
                               center: np.ndarray,
                               radius: float,
-                              max_edge_length: float = 0.8) -> trimesh.Trimesh:
+                              max_edge_length: float = 0.3) -> trimesh.Trimesh:
         """
         Refine (subdivide) mesh faces locally in a spherical region.
         
@@ -1406,6 +1406,7 @@ class OrthosisProcessor:
             center: Center point of the region to refine
             radius: Radius of the spherical region to refine
             max_edge_length: Target maximum edge length in mm (smaller = more triangles)
+                             Default 0.3mm for high-quality engraving on low-poly meshes
             
         Returns:
             Refined mesh with higher polygon density in the target region
@@ -1415,8 +1416,8 @@ class OrthosisProcessor:
             import tempfile
             import os
             
-            # Calculate region slightly larger than engraving to ensure smooth transition
-            expand_factor = 1.3  # 30% larger region for smoother blending
+            # Calculate region larger than engraving to ensure smooth transition
+            expand_factor = 1.5  # 50% larger region for smoother blending
             actual_radius = radius * expand_factor
             
             print(f"Refining mesh locally: center={center}, radius={actual_radius:.1f}mm, max_edge={max_edge_length}mm")
@@ -1447,7 +1448,7 @@ class OrthosisProcessor:
                 # Create a subdivision of faces in region using MeshLib
                 # We'll use edge subdivision for faces in the region
                 settings = mr.SubdivideSettings()
-                settings.maxEdgeLen = max_edge_length  # Target edge length in mm
+                settings.maxEdgeLen = max_edge_length  # Target edge length in mm (aggressive)
                 settings.maxEdgeSplits = 10000000  # Allow many splits
                 settings.maxDeviationAfterFlip = 0.05  # Keep surface accurate
                 
@@ -1481,13 +1482,23 @@ class OrthosisProcessor:
         
         # Fallback: use trimesh subdivision if MeshLib fails
         try:
-            # Simple approach: subdivide the entire mesh once if it has few faces
+            # Aggressive subdivision for low-poly meshes
             avg_face_area = mesh.area / len(mesh.faces)
             target_face_area = (max_edge_length ** 2) * 0.433  # Area of equilateral triangle
             
-            if avg_face_area > target_face_area * 4:  # If faces are too large
-                print("Fallback: subdividing entire mesh once")
-                return mesh.subdivide()
+            # Subdivide multiple times if needed
+            subdivisions_needed = 0
+            current_area = avg_face_area
+            while current_area > target_face_area and subdivisions_needed < 4:
+                current_area /= 4  # Each subdivision quarters face area
+                subdivisions_needed += 1
+            
+            if subdivisions_needed > 0:
+                print(f"Fallback: subdividing entire mesh {subdivisions_needed} times")
+                result = mesh
+                for _ in range(subdivisions_needed):
+                    result = result.subdivide()
+                return result
         except Exception as e:
             print(f"Fallback subdivision failed: {e}")
         
