@@ -1058,10 +1058,12 @@ class OrthosisProcessor:
         print(f"Text position: {position}, normal: {normal}")
         print(f"Text bounds before wrap: {text_mesh.bounds}")
         
-        # Compute approximate text region size
+        # Compute approximate text region size for local refinement
         text_size = text_mesh.bounds[1] - text_mesh.bounds[0]
-        text_width = text_size[0]
-        text_height = text_size[1]
+        region_radius = max(text_size[0], text_size[1]) * 0.6  # Radius of region to refine
+        
+        # Refine the target mesh locally in the engraving region for smoother results
+        mesh = self._refine_mesh_locally(mesh, position, region_radius)
         
         # Wrap the text to follow the curved surface
         wrapped_text = self._wrap_mesh_to_surface(
@@ -1078,23 +1080,13 @@ class OrthosisProcessor:
         try:
             result = self._meshlib_boolean_difference_on_mesh(mesh, wrapped_text)
             if result is not None:
-                # Add smooth infill layer inside the engraving to cover triangulation
-                infill = self._create_engraving_infill(
-                    target_mesh=result,
-                    center_pos=position,
-                    surface_normal=normal,
-                    width=text_width,
-                    height=text_height,
-                    depth=depth
-                )
-                if infill is not None:
-                    result = self._apply_engraving_infill(result, infill)
                 return result
         except Exception as e:
             print(f"Text boolean failed: {e}")
         
         return mesh
         
+        return mesh
     def _wrap_mesh_to_surface(self, 
                               flat_mesh: trimesh.Trimesh,
                               target_mesh: trimesh.Trimesh,
@@ -1319,10 +1311,12 @@ class OrthosisProcessor:
         print(f"Logo bounds before wrap: {logo.bounds}")
         print(f"Mesh bounds: {mesh.bounds}")
         
-        # Compute approximate engraving region size
+        # Compute approximate engraving region size for local refinement
         logo_size = logo.bounds[1] - logo.bounds[0]
-        logo_width = logo_size[0]
-        logo_height = logo_size[1]
+        region_radius = max(logo_size[0], logo_size[1]) * 0.6  # Radius of region to refine
+        
+        # Refine the target mesh locally in the engraving region for smoother results
+        mesh = self._refine_mesh_locally(mesh, position, region_radius)
         
         # Wrap the logo to follow the curved surface
         wrapped_logo = self._wrap_mesh_to_surface(
@@ -1339,17 +1333,6 @@ class OrthosisProcessor:
         try:
             result = self._meshlib_boolean_difference_on_mesh(mesh, wrapped_logo)
             if result is not None:
-                # Add smooth infill layer inside the engraving to cover triangulation
-                infill = self._create_engraving_infill(
-                    target_mesh=result,
-                    center_pos=position,
-                    surface_normal=normal,
-                    width=logo_width,
-                    height=logo_height,
-                    depth=depth
-                )
-                if infill is not None:
-                    result = self._apply_engraving_infill(result, infill)
                 return result
         except Exception as e:
             print(f"Logo boolean failed: {e}")
@@ -1407,229 +1390,11 @@ class OrthosisProcessor:
         
         return mesh
     
-    def _create_engraving_infill(self,
-                                  target_mesh: trimesh.Trimesh,
-                                  center_pos: np.ndarray,
-                                  surface_normal: np.ndarray,
-                                  width: float,
-                                  height: float,
-                                  depth: float,
-                                  infill_thickness: float = 0.15) -> Optional[trimesh.Trimesh]:
-        """
-        Create a smooth, high-poly infill layer that covers the bottom of an engraving.
-        
-        This layer is placed INSIDE the engraving to cover the rough triangulation
-        artifacts from the boolean operation on low-poly meshes.
-        
-        Args:
-            target_mesh: The mesh with the engraving already applied
-            center_pos: Center position on the original surface
-            surface_normal: Normal vector at the center position (pointing outward)
-            width: Width of the engraved area
-            height: Height of the engraved area  
-            depth: Engraving depth
-            infill_thickness: Thickness of the infill layer (thin is enough)
-            
-        Returns:
-            High-poly infill mesh, or None if creation fails
-        """
-        try:
-            print(f"Creating smooth engraving infill: {width:.1f}x{height:.1f}mm at depth {depth:.2f}mm")
-            
-            # Normalize the surface normal (points outward from original surface)
-            normal = surface_normal / np.linalg.norm(surface_normal)
-            
-            # Build coordinate frame (same as wrapping)
-            world_up = np.array([0.0, 0.0, 1.0])
-            mesh_up = world_up.copy()
-            
-            mesh_right = np.cross(mesh_up, normal)
-            if np.linalg.norm(mesh_right) < 0.001:
-                mesh_right = np.array([1.0, 0.0, 0.0])
-            else:
-                mesh_right = mesh_right / np.linalg.norm(mesh_right)
-            mesh_right = -mesh_right  # Flip to match text orientation
-            
-            # === CREATE HIGH-RESOLUTION GRID at engraving depth ===
-            # Use very high density for perfectly smooth bottom surface
-            grid_spacing = 0.3  # mm between grid points (very dense)
-            num_x = max(30, int(width / grid_spacing) + 1)
-            num_y = max(30, int(height / grid_spacing) + 1)
-            
-            print(f"Infill grid: {num_x}x{num_y} = {num_x * num_y} vertices")
-            
-            # Create grid coordinates (slightly smaller than full size to stay inside engraving)
-            margin = 0.2  # mm inset from edges
-            x_coords = np.linspace(-(width/2 - margin), (width/2 - margin), num_x)
-            y_coords = np.linspace(-(height/2 - margin), (height/2 - margin), num_y)
-            xx, yy = np.meshgrid(x_coords, y_coords)
-            
-            # Compute world positions for each grid point
-            num_points = num_x * num_y
-            x_flat = xx.ravel()
-            y_flat = yy.ravel()
-            
-            # Grid points in world space on tangent plane at center
-            grid_points = (center_pos.reshape(1, 3) + 
-                          np.outer(x_flat, mesh_right) + 
-                          np.outer(y_flat, mesh_up))
-            
-            # === RAY CAST TO FIND SURFACE CURVATURE ===
-            # Cast from outside to find the original surface shape
-            ray_origins = grid_points + normal * 50.0
-            ray_directions = np.tile(-normal, (num_points, 1))
-            
-            locations, index_ray, _ = target_mesh.ray.intersects_location(
-                ray_origins=ray_origins,
-                ray_directions=ray_directions
-            )
-            
-            # Build surface curvature grid (where the original surface was)
-            surface_positions = grid_points.copy()  # Fallback to tangent plane
-            
-            if len(locations) > 0:
-                for ray_idx in range(num_points):
-                    mask = index_ray == ray_idx
-                    if np.any(mask):
-                        hits = locations[mask]
-                        distances = np.linalg.norm(hits - ray_origins[ray_idx], axis=1)
-                        closest = hits[np.argmin(distances)]
-                        surface_positions[ray_idx] = closest
-            
-            # === BUILD INFILL MESH ===
-            # Top of infill: at engraving depth (following surface curvature)
-            # Bottom of infill: slightly deeper
-            
-            # Position infill at engraving depth - following surface curvature
-            top_vertices = surface_positions - normal * (depth - infill_thickness/2)
-            bottom_vertices = surface_positions - normal * (depth + infill_thickness/2)
-            
-            # Combine vertices
-            all_vertices = np.vstack([top_vertices, bottom_vertices])
-            
-            # Create faces for the infill slab
-            faces_list = []
-            for j in range(num_y - 1):
-                for i in range(num_x - 1):
-                    # Top surface indices
-                    tl = j * num_x + i
-                    tr = j * num_x + i + 1
-                    bl = (j + 1) * num_x + i
-                    br = (j + 1) * num_x + i + 1
-                    
-                    # Top surface (facing outward/up toward surface opening)
-                    faces_list.append([tl, tr, bl])
-                    faces_list.append([tr, br, bl])
-                    
-                    # Bottom surface indices
-                    btl = tl + num_points
-                    btr = tr + num_points
-                    bbl = bl + num_points
-                    bbr = br + num_points
-                    
-                    # Bottom surface (facing inward/down)
-                    faces_list.append([btl, bbl, btr])
-                    faces_list.append([btr, bbl, bbr])
-            
-            # Add side faces to close the mesh
-            # Top edge (j=0)
-            for i in range(num_x - 1):
-                tl, tr = i, i + 1
-                btl, btr = i + num_points, i + 1 + num_points
-                faces_list.append([tl, btl, tr])
-                faces_list.append([tr, btl, btr])
-            
-            # Bottom edge (j=num_y-1)
-            for i in range(num_x - 1):
-                tl = (num_y - 1) * num_x + i
-                tr = (num_y - 1) * num_x + i + 1
-                btl, btr = tl + num_points, tr + num_points
-                faces_list.append([tl, tr, btl])
-                faces_list.append([tr, btr, btl])
-            
-            # Left edge (i=0)
-            for j in range(num_y - 1):
-                top_curr, top_next = j * num_x, (j + 1) * num_x
-                bot_curr, bot_next = top_curr + num_points, top_next + num_points
-                faces_list.append([top_curr, top_next, bot_curr])
-                faces_list.append([top_next, bot_next, bot_curr])
-            
-            # Right edge (i=num_x-1)
-            for j in range(num_y - 1):
-                top_curr = j * num_x + (num_x - 1)
-                top_next = (j + 1) * num_x + (num_x - 1)
-                bot_curr, bot_next = top_curr + num_points, top_next + num_points
-                faces_list.append([top_curr, bot_curr, top_next])
-                faces_list.append([top_next, bot_curr, bot_next])
-            
-            faces = np.array(faces_list)
-            
-            # Create the mesh
-            infill_mesh = trimesh.Trimesh(vertices=all_vertices, faces=faces)
-            infill_mesh.fix_normals()
-            
-            print(f"Engraving infill created: {len(infill_mesh.vertices)} vertices, {len(infill_mesh.faces)} faces")
-            
-            return infill_mesh
-            
-        except Exception as e:
-            print(f"Failed to create engraving infill: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
-    
-    def _apply_engraving_infill(self,
-                                 mesh: trimesh.Trimesh,
-                                 infill: trimesh.Trimesh) -> trimesh.Trimesh:
-        """
-        Boolean-union the infill layer into the mesh to cover rough engraving bottom.
-        
-        Args:
-            mesh: Mesh with engraving
-            infill: Smooth infill mesh
-            
-        Returns:
-            Mesh with smooth infill applied
-        """
-        try:
-            import meshlib.mrmeshpy as mr
-            import tempfile
-            import os
-            
-            print("Applying engraving infill via boolean union...")
-            
-            with tempfile.TemporaryDirectory() as tmpdir:
-                mesh_path = os.path.join(tmpdir, "mesh.stl")
-                infill_path = os.path.join(tmpdir, "infill.stl")
-                result_path = os.path.join(tmpdir, "result.stl")
-                
-                mesh.export(mesh_path)
-                infill.export(infill_path)
-                
-                mesh_mr = mr.loadMesh(mesh_path)
-                infill_mr = mr.loadMesh(infill_path)
-                
-                # Boolean union adds the smooth infill to cover rough bottom
-                result = mr.boolean(mesh_mr, infill_mr, mr.BooleanOperation.Union)
-                
-                if result.valid() and result.mesh.topology.numValidFaces() > 0:
-                    mr.saveMesh(result.mesh, result_path)
-                    result_mesh = trimesh.load(result_path, force='mesh')
-                    if result_mesh is not None and len(result_mesh.vertices) > 0:
-                        result_mesh.fix_normals()
-                        print(f"Engraving infill applied: {len(result_mesh.faces)} faces")
-                        return result_mesh
-                        
-        except Exception as e:
-            print(f"Engraving infill union failed: {e}")
-        
-        return mesh
-
     def _refine_mesh_locally(self, 
                               mesh: trimesh.Trimesh,
                               center: np.ndarray,
                               radius: float,
-                              max_edge_length: float = 0.3) -> trimesh.Trimesh:
+                              max_edge_length: float = 0.1) -> trimesh.Trimesh:
         """
         Refine (subdivide) mesh faces locally in a spherical region.
         
@@ -1641,7 +1406,7 @@ class OrthosisProcessor:
             center: Center point of the region to refine
             radius: Radius of the spherical region to refine
             max_edge_length: Target maximum edge length in mm (smaller = more triangles)
-                             Default 0.3mm for high-quality engraving on low-poly meshes
+                             Default 0.1mm for ultra-high-quality engraving on low-poly meshes
             
         Returns:
             Refined mesh with higher polygon density in the target region
@@ -1652,7 +1417,7 @@ class OrthosisProcessor:
             import os
             
             # Calculate region larger than engraving to ensure smooth transition
-            expand_factor = 1.5  # 50% larger region for smoother blending
+            expand_factor = 2.0  # 100% larger region for smoother blending
             actual_radius = radius * expand_factor
             
             print(f"Refining mesh locally: center={center}, radius={actual_radius:.1f}mm, max_edge={max_edge_length}mm")
