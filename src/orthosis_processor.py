@@ -1007,290 +1007,6 @@ class OrthosisProcessor:
         
         return (left_mesh, right_mesh)
     
-    def apply_logo_and_text_combined(self,
-                                     position: np.ndarray,
-                                     normal: np.ndarray,
-                                     text: str,
-                                     logo_offset_x: float = 0,
-                                     logo_offset_y: float = 0,
-                                     logo_rotation: float = 0,
-                                     logo_scale: float = 1.0,
-                                     text_offset_x: float = 0,
-                                     text_offset_y: float = 0,
-                                     text_rotation: float = 0,
-                                     text_font_size: float = 4.0,
-                                     spacing: float = 5.0,
-                                     depth: float = 0.6,
-                                     layout: str = 'horizontal') -> Tuple[trimesh.Trimesh, trimesh.Trimesh]:
-        """
-        Apply both logo and text engraving in a single step with automatic positioning.
-        
-        The logo and text are positioned relative to each other based on the layout:
-        - 'horizontal': Logo on left, text on right (same baseline)
-        - 'vertical': Logo on top, text below
-        - 'logo_above': Logo above text
-        - 'logo_below': Logo below text
-        
-        Args:
-            position: 3D position for the combined engraving area center
-            normal: Surface normal at the position
-            text: Text to engrave (patient name, etc.)
-            logo_offset_x: Additional X offset for logo in mm
-            logo_offset_y: Additional Y offset for logo in mm
-            logo_rotation: Rotation angle for logo in degrees
-            logo_scale: Scale factor for logo (1.0 = 100%)
-            text_offset_x: Additional X offset for text in mm
-            text_offset_y: Additional Y offset for text in mm
-            text_rotation: Rotation angle for text in degrees
-            text_font_size: Font size for text in mm
-            spacing: Spacing between logo and text in mm
-            depth: Engraving depth in mm
-            layout: Layout arrangement ('horizontal', 'vertical', 'logo_above', 'logo_below')
-            
-        Returns:
-            Tuple of (left_engraved, right_engraved)
-        """
-        import time
-        start_time = time.perf_counter()
-        
-        if self._pristine_mesh is None:
-            raise ValueError("No orthosis loaded")
-        if self.logo_mesh is None:
-            raise ValueError("No logo loaded")
-        if not text.strip():
-            raise ValueError("No text provided")
-        
-        # Restore to pristine state before applying to avoid overlap
-        self._restore_to_pristine()
-        
-        # Store positions for export
-        self.logo_position = position.copy()
-        self.logo_normal = normal.copy()
-        self.text_position = position.copy()
-        self.text_normal = normal.copy()
-        
-        print(f"apply_logo_and_text_combined: layout={layout}, spacing={spacing}mm")
-        
-        # Get logo dimensions after scaling
-        logo_copy = self.logo_mesh.copy()
-        if logo_scale != 1.0:
-            scale_matrix = np.diag([logo_scale, logo_scale, 1, 1])
-            logo_copy.apply_transform(scale_matrix)
-        logo_bounds = logo_copy.bounds
-        logo_width = logo_bounds[1][0] - logo_bounds[0][0]
-        logo_height = logo_bounds[1][1] - logo_bounds[0][1]
-        
-        # Create text mesh to get dimensions
-        extrusion_height = 30.0
-        text_mesh = self._create_multiline_text_mesh(text.upper(), font_size=text_font_size, depth=extrusion_height)
-        if text_mesh is None:
-            raise ValueError("Failed to create text mesh")
-        text_bounds = text_mesh.bounds
-        text_width = text_bounds[1][0] - text_bounds[0][0]
-        text_height = text_bounds[1][1] - text_bounds[0][1]
-        
-        print(f"Logo size: {logo_width:.1f}x{logo_height:.1f}mm, Text size: {text_width:.1f}x{text_height:.1f}mm")
-        
-        # Calculate positions based on layout
-        if layout == 'horizontal':
-            # Logo on left, text on right, centered on the position
-            total_width = logo_width + spacing + text_width
-            logo_local_offset_x = -total_width / 2 + logo_width / 2
-            text_local_offset_x = total_width / 2 - text_width / 2
-            logo_local_offset_y = 0
-            text_local_offset_y = 0
-        elif layout == 'vertical' or layout == 'logo_above':
-            # Logo above, text below
-            total_height = logo_height + spacing + text_height
-            logo_local_offset_x = 0
-            text_local_offset_x = 0
-            logo_local_offset_y = total_height / 2 - logo_height / 2
-            text_local_offset_y = -total_height / 2 + text_height / 2
-        elif layout == 'logo_below':
-            # Text above, logo below
-            total_height = logo_height + spacing + text_height
-            logo_local_offset_x = 0
-            text_local_offset_x = 0
-            logo_local_offset_y = -total_height / 2 + logo_height / 2
-            text_local_offset_y = total_height / 2 - text_height / 2
-        else:
-            # Default: horizontal
-            total_width = logo_width + spacing + text_width
-            logo_local_offset_x = -total_width / 2 + logo_width / 2
-            text_local_offset_x = total_width / 2 - text_width / 2
-            logo_local_offset_y = 0
-            text_local_offset_y = 0
-        
-        # Apply user offsets on top of calculated positions
-        final_logo_offset_x = logo_local_offset_x + logo_offset_x
-        final_logo_offset_y = logo_local_offset_y + logo_offset_y
-        final_text_offset_x = text_local_offset_x + text_offset_x
-        final_text_offset_y = text_local_offset_y + text_offset_y
-        
-        print(f"Logo offset: ({final_logo_offset_x:.1f}, {final_logo_offset_y:.1f})")
-        print(f"Text offset: ({final_text_offset_x:.1f}, {final_text_offset_y:.1f})")
-        
-        # Create combined cutting tool mesh
-        # Start with logo
-        combined_tool_right = self._prepare_combined_tool(
-            logo_mesh=self.logo_mesh.copy(),
-            text_mesh=text_mesh.copy(),
-            logo_offset_x=final_logo_offset_x,
-            logo_offset_y=final_logo_offset_y,
-            logo_rotation=logo_rotation,
-            logo_scale=logo_scale,
-            text_offset_x=final_text_offset_x,
-            text_offset_y=final_text_offset_y,
-            text_rotation=text_rotation,
-            mirrored=False
-        )
-        
-        combined_tool_left = self._prepare_combined_tool(
-            logo_mesh=self.logo_mesh.copy(),
-            text_mesh=self._create_multiline_text_mesh(text.upper(), font_size=text_font_size, depth=extrusion_height).copy(),
-            logo_offset_x=final_logo_offset_x,
-            logo_offset_y=final_logo_offset_y,
-            logo_rotation=-logo_rotation,  # Negate for mirrored side
-            logo_scale=logo_scale,
-            text_offset_x=final_text_offset_x,
-            text_offset_y=final_text_offset_y,
-            text_rotation=-text_rotation,  # Negate for mirrored side
-            mirrored=True
-        )
-        
-        # Prepare meshes and positions
-        right_mesh = self.orthosis_original.copy()
-        left_mesh = self.mirror_orthosis(self.orthosis_original, axis='y')
-        
-        pos_mirrored = self._mirror_point(position, 'y')
-        normal_mirrored = self._mirror_point(normal, 'y')
-        
-        # Process both sides in parallel
-        def process_right():
-            wrapped_tool = self._wrap_mesh_to_surface(
-                flat_mesh=combined_tool_right,
-                target_mesh=right_mesh,
-                center_pos=position,
-                surface_normal=normal,
-                depth=depth
-            )
-            return self._meshlib_boolean_difference_on_mesh(right_mesh, wrapped_tool)
-        
-        def process_left():
-            wrapped_tool = self._wrap_mesh_to_surface(
-                flat_mesh=combined_tool_left,
-                target_mesh=left_mesh,
-                center_pos=pos_mirrored,
-                surface_normal=normal_mirrored,
-                depth=depth
-            )
-            return self._meshlib_boolean_difference_on_mesh(left_mesh, wrapped_tool)
-        
-        # Use ThreadPoolExecutor for parallel processing
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            future_right = executor.submit(process_right)
-            future_left = executor.submit(process_left)
-            
-            right_result = future_right.result()
-            left_result = future_left.result()
-            
-            if right_result is not None:
-                right_mesh = right_result
-            if left_result is not None:
-                left_mesh = left_result
-        
-        # Store results
-        self.orthosis_mirrored = left_mesh
-        self.orthosis_original = right_mesh
-        self.is_engraved = True
-        self.logo_applied = True
-        self.text_applied = True
-        
-        # Save state after combined operation
-        self._mesh_after_logo = right_mesh.copy()
-        self._mirrored_after_logo = left_mesh.copy()
-        
-        # Store text parameters
-        self._last_text_params = {
-            'text': text,
-            'position': position.copy(),
-            'normal': normal.copy(),
-            'offset_x': final_text_offset_x,
-            'offset_y': final_text_offset_y,
-            'rotation': text_rotation,
-            'font_size': text_font_size,
-            'depth': depth
-        }
-        
-        elapsed = time.perf_counter() - start_time
-        print(f"Logo + Text combined applied in {elapsed*1000:.1f}ms")
-        
-        return (left_mesh, right_mesh)
-    
-    def _prepare_combined_tool(self,
-                               logo_mesh: trimesh.Trimesh,
-                               text_mesh: trimesh.Trimesh,
-                               logo_offset_x: float,
-                               logo_offset_y: float,
-                               logo_rotation: float,
-                               logo_scale: float,
-                               text_offset_x: float,
-                               text_offset_y: float,
-                               text_rotation: float,
-                               mirrored: bool = False) -> trimesh.Trimesh:
-        """
-        Prepare a combined cutting tool mesh from logo and text.
-        
-        Args:
-            logo_mesh: The logo mesh to include
-            text_mesh: The text mesh to include
-            logo_offset_x/y: Offset for logo placement
-            logo_rotation: Rotation for logo
-            logo_scale: Scale for logo
-            text_offset_x/y: Offset for text placement
-            text_rotation: Rotation for text
-            mirrored: Whether this is for the mirrored side
-            
-        Returns:
-            Combined mesh with both logo and text
-        """
-        # Process logo
-        if logo_scale != 1.0:
-            scale_matrix = np.diag([logo_scale, logo_scale, 1, 1])
-            logo_mesh.apply_transform(scale_matrix)
-        
-        if logo_rotation != 0:
-            rot_rad = np.radians(logo_rotation)
-            rot_matrix = trimesh.transformations.rotation_matrix(rot_rad, [0, 0, 1])
-            logo_mesh.apply_transform(rot_matrix)
-        
-        # Center logo
-        logo_center = (logo_mesh.bounds[0] + logo_mesh.bounds[1]) / 2
-        logo_mesh.vertices -= logo_center
-        
-        # Apply offset
-        logo_mesh.vertices[:, 0] += logo_offset_x
-        logo_mesh.vertices[:, 1] += logo_offset_y
-        
-        # Process text
-        if text_rotation != 0:
-            rot_rad = np.radians(text_rotation)
-            rot_matrix = trimesh.transformations.rotation_matrix(rot_rad, [0, 0, 1])
-            text_mesh.apply_transform(rot_matrix)
-        
-        # Center text
-        text_center = (text_mesh.bounds[0] + text_mesh.bounds[1]) / 2
-        text_mesh.vertices -= text_center
-        
-        # Apply offset
-        text_mesh.vertices[:, 0] += text_offset_x
-        text_mesh.vertices[:, 1] += text_offset_y
-        
-        # Combine meshes
-        combined = trimesh.util.concatenate([logo_mesh, text_mesh])
-        
-        return combined
-
     def _apply_tangent_offset(self, position: np.ndarray, normal: np.ndarray, 
                                offset_x: float, offset_y: float) -> np.ndarray:
         """Apply offset in the tangent plane at the given surface point."""
@@ -1341,6 +1057,13 @@ class OrthosisProcessor:
         
         print(f"Text position: {position}, normal: {normal}")
         print(f"Text bounds before wrap: {text_mesh.bounds}")
+        
+        # Compute approximate text region size for local refinement
+        text_size = text_mesh.bounds[1] - text_mesh.bounds[0]
+        region_radius = max(text_size[0], text_size[1]) * 0.6  # Radius of region to refine
+        
+        # Refine the target mesh locally in the engraving region for smoother results
+        mesh = self._refine_mesh_locally(mesh, position, region_radius)
         
         # Wrap the text to follow the curved surface
         wrapped_text = self._wrap_mesh_to_surface(
@@ -1588,6 +1311,13 @@ class OrthosisProcessor:
         print(f"Logo bounds before wrap: {logo.bounds}")
         print(f"Mesh bounds: {mesh.bounds}")
         
+        # Compute approximate engraving region size for local refinement
+        logo_size = logo.bounds[1] - logo.bounds[0]
+        region_radius = max(logo_size[0], logo_size[1]) * 0.6  # Radius of region to refine
+        
+        # Refine the target mesh locally in the engraving region for smoother results
+        mesh = self._refine_mesh_locally(mesh, position, region_radius)
+        
         # Wrap the logo to follow the curved surface
         wrapped_logo = self._wrap_mesh_to_surface(
             flat_mesh=logo,
@@ -1657,6 +1387,109 @@ class OrthosisProcessor:
                 return result
         except Exception as e:
             print(f"Text boolean failed: {e}")
+        
+        return mesh
+    
+    def _refine_mesh_locally(self, 
+                              mesh: trimesh.Trimesh,
+                              center: np.ndarray,
+                              radius: float,
+                              max_edge_length: float = 0.8) -> trimesh.Trimesh:
+        """
+        Refine (subdivide) mesh faces locally in a spherical region.
+        
+        This increases polygon density in the engraving area to reduce
+        visible triangulation artifacts after boolean operations.
+        
+        Args:
+            mesh: Target mesh to refine
+            center: Center point of the region to refine
+            radius: Radius of the spherical region to refine
+            max_edge_length: Target maximum edge length in mm (smaller = more triangles)
+            
+        Returns:
+            Refined mesh with higher polygon density in the target region
+        """
+        try:
+            import meshlib.mrmeshpy as mr
+            import tempfile
+            import os
+            
+            # Calculate region slightly larger than engraving to ensure smooth transition
+            expand_factor = 1.3  # 30% larger region for smoother blending
+            actual_radius = radius * expand_factor
+            
+            print(f"Refining mesh locally: center={center}, radius={actual_radius:.1f}mm, max_edge={max_edge_length}mm")
+            
+            # Find faces within the refinement region
+            face_centers = mesh.triangles_center
+            distances = np.linalg.norm(face_centers - center, axis=1)
+            faces_in_region = np.where(distances <= actual_radius)[0]
+            
+            if len(faces_in_region) == 0:
+                print("No faces found in refinement region")
+                return mesh
+            
+            print(f"Found {len(faces_in_region)} faces in refinement region (of {len(mesh.faces)} total)")
+            
+            # Use MeshLib for high-quality local remeshing
+            with tempfile.TemporaryDirectory() as tmpdir:
+                mesh_path = os.path.join(tmpdir, "mesh.stl")
+                result_path = os.path.join(tmpdir, "refined.stl")
+                
+                mesh.export(mesh_path)
+                mr_mesh = mr.loadMesh(mesh_path)
+                
+                # Get face IDs that need refinement
+                # MeshLib uses face IDs, we need to identify them
+                num_faces = mr_mesh.topology.numValidFaces()
+                
+                # Create a subdivision of faces in region using MeshLib
+                # We'll use edge subdivision for faces in the region
+                settings = mr.SubdivideSettings()
+                settings.maxEdgeLen = max_edge_length  # Target edge length in mm
+                settings.maxEdgeSplits = 10000000  # Allow many splits
+                settings.maxDeviationAfterFlip = 0.05  # Keep surface accurate
+                
+                # Create a region bitmap for local refinement
+                region = mr.FaceBitSet()
+                region.resize(num_faces)
+                for face_idx in faces_in_region:
+                    if face_idx < num_faces:
+                        region.set(mr.FaceId(int(face_idx)), True)
+                
+                settings.region = region
+                
+                # Perform local subdivision
+                mr.subdivideMesh(mr_mesh, settings)
+                
+                new_num_faces = mr_mesh.topology.numValidFaces()
+                print(f"Mesh refined: {num_faces} -> {new_num_faces} faces (+{new_num_faces - num_faces})")
+                
+                # Save and reload
+                mr.saveMesh(mr_mesh, result_path)
+                refined_mesh = trimesh.load(result_path, force='mesh')
+                
+                if refined_mesh is not None and len(refined_mesh.vertices) > 0:
+                    refined_mesh.fix_normals()
+                    return refined_mesh
+                    
+        except ImportError:
+            print("MeshLib not available for local refinement, using fallback")
+        except Exception as e:
+            print(f"Local refinement failed: {e}, using original mesh")
+        
+        # Fallback: use trimesh subdivision if MeshLib fails
+        try:
+            # Simple approach: subdivide the entire mesh once if it has few faces
+            avg_face_area = mesh.area / len(mesh.faces)
+            target_face_area = (max_edge_length ** 2) * 0.433  # Area of equilateral triangle
+            
+            if avg_face_area > target_face_area * 4:  # If faces are too large
+                print("Fallback: subdividing entire mesh once")
+                return mesh.subdivide()
+        except Exception as e:
+            print(f"Fallback subdivision failed: {e}")
         
         return mesh
     
@@ -1818,17 +1651,11 @@ class OrthosisProcessor:
         return self._create_text_mesh_polygon(text.upper(), font_size, depth)
     
     def _create_text_mesh_matplotlib(self, text: str, font_size: float, depth: float) -> Optional[trimesh.Trimesh]:
-        """
-        Create 3D text mesh using matplotlib's TextPath.
-        
-        IMPROVED: Uses proper winding order detection to correctly identify
-        holes vs solid areas, preventing cross-connections and artifacts.
-        """
+        """Create 3D text mesh using matplotlib's TextPath."""
         from matplotlib.textpath import TextPath
         from matplotlib.font_manager import FontProperties
-        from shapely.geometry import Polygon, MultiPolygon, LinearRing
+        from shapely.geometry import Polygon, MultiPolygon
         from shapely.ops import unary_union
-        from shapely.validation import make_valid
         
         if not text.strip():
             return None
@@ -1838,43 +1665,26 @@ class OrthosisProcessor:
         
         MOVETO, LINETO, CURVE3, CURVE4, CLOSEPOLY = 1, 2, 3, 4, 79
         
-        # Extract all contour paths from the text path
-        contours = []  # List of (points, is_clockwise) tuples
+        polygons = []
         current_polygon = []
         vertices = text_path.vertices
         codes = text_path.codes
         
-        # Use more curve samples for smoother text (reduces jaggedness)
-        t_samples_quad = np.linspace(0, 1, 16)[1:]
-        t_samples_cubic = np.linspace(0, 1, 20)[1:]
-        
-        def signed_area(points):
-            """Calculate signed area. Positive = counter-clockwise, Negative = clockwise."""
-            if len(points) < 3:
-                return 0
-            n = len(points)
-            area = 0.0
-            for i in range(n):
-                j = (i + 1) % n
-                area += points[i][0] * points[j][1]
-                area -= points[j][0] * points[i][1]
-            return area / 2.0
-        
-        def finalize_contour(pts):
-            """Finalize current contour if valid."""
-            if len(pts) >= 3:
-                area = signed_area(pts)
-                if abs(area) > 0.001:  # Minimum area threshold
-                    # CCW (positive area) = outer contour, CW (negative area) = hole
-                    is_hole = area < 0
-                    contours.append((pts.copy(), is_hole))
+        t_samples_quad = np.linspace(0, 1, 12)[1:]
+        t_samples_cubic = np.linspace(0, 1, 16)[1:]
         
         i = 0
         while i < len(codes):
             code = codes[i]
             
             if code == MOVETO:
-                finalize_contour(current_polygon)
+                if len(current_polygon) >= 3:
+                    try:
+                        poly = Polygon(current_polygon)
+                        if poly.is_valid and poly.area > 0.001:
+                            polygons.append(poly)
+                    except:
+                        pass
                 current_polygon = [tuple(vertices[i])]
                 i += 1
                 
@@ -1906,114 +1716,93 @@ class OrthosisProcessor:
                 i += 3
                 
             elif code == CLOSEPOLY:
-                finalize_contour(current_polygon)
+                if len(current_polygon) >= 3:
+                    try:
+                        poly = Polygon(current_polygon)
+                        if poly.is_valid and poly.area > 0.001:
+                            polygons.append(poly)
+                    except:
+                        pass
                 current_polygon = []
                 i += 1
             else:
                 i += 1
         
-        # Finalize any remaining contour
-        finalize_contour(current_polygon)
+        if len(current_polygon) >= 3:
+            try:
+                poly = Polygon(current_polygon)
+                if poly.is_valid and poly.area > 0.001:
+                    polygons.append(poly)
+            except:
+                pass
         
-        if not contours:
+        if not polygons:
             return None
         
-        # Separate outer contours from holes based on winding order
-        outer_contours = [(pts, Polygon(pts)) for pts, is_hole in contours if not is_hole]
-        hole_contours = [(pts, Polygon(pts)) for pts, is_hole in contours if is_hole]
+        # Clean and merge polygons
+        raw_polygons = []
+        for poly in polygons:
+            try:
+                cleaned = poly.buffer(0)
+                if cleaned.is_valid and cleaned.area > 0.001:
+                    raw_polygons.append(cleaned)
+            except:
+                continue
         
-        print(f"Text '{text}': {len(outer_contours)} outer contours, {len(hole_contours)} holes")
+        if not raw_polygons:
+            return None
         
-        # Build polygons with holes properly assigned
+        # Sort by area and handle holes
+        raw_polygons.sort(key=lambda p: p.area, reverse=True)
+        
         final_polygons = []
+        used = set()
         
-        for outer_pts, outer_poly in outer_contours:
-            if not outer_poly.is_valid:
-                try:
-                    outer_poly = make_valid(outer_poly)
-                except:
-                    outer_poly = outer_poly.buffer(0)
-            
-            if outer_poly.is_empty or outer_poly.area < 0.01:
+        for i, outer in enumerate(raw_polygons):
+            if i in used:
                 continue
             
-            # Find holes that belong to this outer contour
-            holes_for_outer = []
-            for hole_pts, hole_poly in hole_contours:
-                if not hole_poly.is_valid:
-                    try:
-                        hole_poly = make_valid(hole_poly)
-                    except:
-                        hole_poly = hole_poly.buffer(0)
-                
-                if hole_poly.is_empty or hole_poly.area < 0.005:
+            holes = []
+            for j, inner in enumerate(raw_polygons):
+                if j <= i or j in used:
                     continue
-                
-                # Check if hole is inside the outer contour
-                try:
-                    if outer_poly.contains(hole_poly) or outer_poly.intersects(hole_poly):
-                        holes_for_outer.append(hole_pts)
-                except:
-                    continue
+                if outer.contains(inner):
+                    holes.append(inner)
+                    used.add(j)
             
-            # Create polygon with holes using proper constructor
-            try:
-                if holes_for_outer:
-                    result_poly = Polygon(outer_pts, holes_for_outer)
-                else:
-                    result_poly = Polygon(outer_pts)
-                
-                if not result_poly.is_valid:
-                    result_poly = result_poly.buffer(0)
-                
-                if not result_poly.is_empty and result_poly.area > 0.01:
-                    final_polygons.append(result_poly)
-            except Exception as e:
-                print(f"Failed to create polygon with holes: {e}")
-                # Fallback: just use outer without holes
-                try:
-                    if outer_poly.area > 0.01:
-                        final_polygons.append(outer_poly)
-                except:
-                    pass
+            if holes:
+                result = outer
+                for hole in holes:
+                    try:
+                        result = result.difference(hole)
+                    except:
+                        pass
+                if not result.is_empty:
+                    final_polygons.append(result)
+            else:
+                final_polygons.append(outer)
+            
+            used.add(i)
         
         if not final_polygons:
             return None
         
-        # Apply small buffer to clean up any remaining self-intersections
-        cleaned_polygons = []
-        for poly in final_polygons:
-            try:
-                # Small positive then negative buffer cleans up geometry
-                cleaned = poly.buffer(0.02).buffer(-0.02)
-                if cleaned.is_valid and not cleaned.is_empty and cleaned.area > 0.01:
-                    cleaned_polygons.append(cleaned)
-                elif poly.is_valid and poly.area > 0.01:
-                    cleaned_polygons.append(poly)
-            except:
-                if poly.is_valid and poly.area > 0.01:
-                    cleaned_polygons.append(poly)
-        
-        if not cleaned_polygons:
-            return None
-        
         # Extrude to 3D
         meshes = []
-        for poly in cleaned_polygons:
+        for poly in final_polygons:
             try:
                 if isinstance(poly, MultiPolygon):
                     for p in poly.geoms:
                         if p.is_valid and p.area > 0.01:
                             m = trimesh.creation.extrude_polygon(p, height=depth, engine='earcut')
-                            if m is not None and len(m.vertices) > 0:
+                            if m:
                                 meshes.append(m)
                 else:
                     if poly.is_valid and poly.area > 0.01:
                         m = trimesh.creation.extrude_polygon(poly, height=depth, engine='earcut')
-                        if m is not None and len(m.vertices) > 0:
+                        if m:
                             meshes.append(m)
-            except Exception as e:
-                print(f"Extrusion error for polygon: {e}")
+            except:
                 pass
         
         if meshes:

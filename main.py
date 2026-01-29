@@ -781,8 +781,6 @@ class MainWindow(QMainWindow):
         self._logo_normal: Optional[np.ndarray] = None
         self._text_position: Optional[np.ndarray] = None
         self._text_normal: Optional[np.ndarray] = None
-        self._combined_position: Optional[np.ndarray] = None
-        self._combined_normal: Optional[np.ndarray] = None
         
         # Track if logo/text have been applied
         self._logo_applied = False
@@ -1156,85 +1154,6 @@ class MainWindow(QMainWindow):
         
         layout.addWidget(text_group)
         
-        # === Combined Logo + Text (Single Step) ===
-        combined_group = QGroupBox("Quick: Logo + Text (Single Step)")
-        combined_group.setStyleSheet("QGroupBox { font-weight: bold; background-color: #e8f5e9; }")
-        combined_layout = QGridLayout(combined_group)
-        
-        # Info label
-        combined_info = QLabel("Apply logo and text together with automatic positioning")
-        combined_info.setWordWrap(True)
-        combined_info.setStyleSheet("color: #388E3C; font-size: 10px;")
-        combined_layout.addWidget(combined_info, 0, 0, 1, 2)
-        
-        # Pick combined position
-        self.pick_combined_btn = QPushButton("Pick Combined Position")
-        self.pick_combined_btn.setMinimumHeight(30)
-        self.pick_combined_btn.setStyleSheet("font-weight: bold;")
-        self.pick_combined_btn.clicked.connect(self._start_combined_picking)
-        combined_layout.addWidget(self.pick_combined_btn, 1, 0, 1, 2)
-        
-        self.combined_pos_info = QLabel("Position: Not set")
-        self.combined_pos_info.setStyleSheet("color: gray;")
-        combined_layout.addWidget(self.combined_pos_info, 2, 0, 1, 2)
-        
-        # Layout selection
-        combined_layout.addWidget(QLabel("Layout:"), 3, 0)
-        self.combined_layout_combo = QComboBox()
-        self.combined_layout_combo.addItems(["Horizontal (Logo | Text)", "Logo Above Text", "Logo Below Text"])
-        combined_layout.addWidget(self.combined_layout_combo, 3, 1)
-        
-        # Spacing slider
-        combined_layout.addWidget(QLabel("Spacing:"), 4, 0)
-        self.combined_spacing_slider = NoWheelSlider(Qt.Orientation.Horizontal)
-        self.combined_spacing_slider.setRange(0, 30)  # 0-30mm
-        self.combined_spacing_slider.setValue(5)  # 5mm default
-        combined_layout.addWidget(self.combined_spacing_slider, 4, 1)
-        
-        # Scale slider  
-        combined_layout.addWidget(QLabel("Logo Scale:"), 5, 0)
-        self.combined_scale_slider = NoWheelSlider(Qt.Orientation.Horizontal)
-        self.combined_scale_slider.setRange(50, 200)  # 50% to 200%
-        self.combined_scale_slider.setValue(100)
-        combined_layout.addWidget(self.combined_scale_slider, 5, 1)
-        
-        # Font size slider
-        combined_layout.addWidget(QLabel("Text Size:"), 6, 0)
-        self.combined_fontsize_slider = NoWheelSlider(Qt.Orientation.Horizontal)
-        self.combined_fontsize_slider.setRange(20, 100)  # 2.0 to 10.0 mm
-        self.combined_fontsize_slider.setValue(40)  # 4.0mm default
-        combined_layout.addWidget(self.combined_fontsize_slider, 6, 1)
-        
-        # Depth slider
-        combined_layout.addWidget(QLabel("Depth:"), 7, 0)
-        self.combined_depth_slider = NoWheelSlider(Qt.Orientation.Horizontal)
-        self.combined_depth_slider.setRange(3, 20)  # 0.3mm to 2.0mm
-        self.combined_depth_slider.setValue(6)  # 0.6mm default
-        combined_layout.addWidget(self.combined_depth_slider, 7, 1)
-        
-        # Slider value info
-        self.combined_slider_info = QLabel("Spacing:5mm Scale:100% Text:4.0mm Depth:0.6mm")
-        self.combined_slider_info.setStyleSheet("color: gray; font-size: 10px;")
-        combined_layout.addWidget(self.combined_slider_info, 8, 0, 1, 2)
-        
-        # Connect slider changes
-        self.combined_spacing_slider.valueChanged.connect(self._on_combined_slider_changed)
-        self.combined_scale_slider.valueChanged.connect(self._on_combined_slider_changed)
-        self.combined_fontsize_slider.valueChanged.connect(self._on_combined_slider_changed)
-        self.combined_depth_slider.valueChanged.connect(self._on_combined_slider_changed)
-        
-        # Apply combined button
-        self.apply_combined_btn = QPushButton("Apply Logo + Text")
-        self.apply_combined_btn.setMinimumHeight(40)
-        self.apply_combined_btn.setStyleSheet("background-color: #8BC34A; color: white; font-weight: bold; font-size: 12px;")
-        self.apply_combined_btn.clicked.connect(self._apply_combined)
-        combined_layout.addWidget(self.apply_combined_btn, 9, 0, 1, 2)
-        
-        self.combined_status = QLabel("")
-        combined_layout.addWidget(self.combined_status, 10, 0, 1, 2)
-        
-        layout.addWidget(combined_group)
-        
         # === Step 4: Export ===
         export_group = QGroupBox("4. Export STL Files")
         export_layout = QVBoxLayout(export_group)
@@ -1300,7 +1219,6 @@ class MainWindow(QMainWindow):
         """Connect Qt signals to slots."""
         self.viewer.logo_point_picked.connect(self._on_logo_picked)
         self.viewer.text_point_picked.connect(self._on_text_picked)
-        self.viewer.combined_point_picked.connect(self._on_combined_picked)
     
     def _update_ui_state(self):
         """Update UI enabled/disabled states."""
@@ -1308,7 +1226,6 @@ class MainWindow(QMainWindow):
         has_logo_pos = self._logo_position is not None
         has_text_pos = self._text_position is not None
         has_patient_name = len(self.patient_name_edit.text().strip()) > 0
-        has_combined_pos = self._combined_position is not None
         
         # Enable controls based on state
         self.logo_v1_btn.setEnabled(has_mesh)
@@ -1333,15 +1250,6 @@ class MainWindow(QMainWindow):
         self.text_rotation_slider.setEnabled(has_text_pos)
         self.text_size_slider.setEnabled(has_text_pos)
         self.apply_text_btn.setEnabled(has_text_pos and has_patient_name)
-        
-        # Combined sliders and button
-        self.pick_combined_btn.setEnabled(has_mesh and has_patient_name)
-        self.combined_spacing_slider.setEnabled(has_combined_pos)
-        self.combined_scale_slider.setEnabled(has_combined_pos)
-        self.combined_fontsize_slider.setEnabled(has_combined_pos)
-        self.combined_depth_slider.setEnabled(has_combined_pos)
-        self.combined_layout_combo.setEnabled(has_combined_pos)
-        self.apply_combined_btn.setEnabled(has_combined_pos and has_patient_name and has_mesh)
         
         # Export requires at least one applied
         can_export = has_mesh and (self._logo_applied or self._text_applied)
@@ -1748,18 +1656,6 @@ class MainWindow(QMainWindow):
         
         self._update_ui_state()
     
-    def _on_combined_picked(self, point: np.ndarray, normal: np.ndarray):
-        """Handle combined position picked."""
-        self._combined_position = point.copy()
-        self._combined_normal = normal.copy()
-        
-        self.combined_pos_info.setText(f"Position: ({point[0]:.1f}, {point[1]:.1f}, {point[2]:.1f})")
-        self.combined_pos_info.setStyleSheet("color: green;")
-        self.status_bar.showMessage("Combined position set. Adjust sliders and click Apply Logo + Text.")
-        self.pick_combined_btn.setStyleSheet("font-weight: bold;")
-        
-        self._update_ui_state()
-
     def _apply_text(self):
         """Apply text engraving to the mesh."""
         patient_name = self.patient_name_edit.text().strip()
@@ -1814,121 +1710,6 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Text application failed:\n{str(e)}")
             self.status_bar.showMessage("Text application failed")
     
-    # === Combined Logo + Text ===
-    
-    def _on_combined_slider_changed(self):
-        """Update combined slider info label."""
-        spacing = self.combined_spacing_slider.value()
-        scale = self.combined_scale_slider.value()
-        fontsize = self.combined_fontsize_slider.value() / 10.0
-        depth = self.combined_depth_slider.value() / 10.0
-        self.combined_slider_info.setText(
-            f"Spacing:{spacing}mm Scale:{scale}% Text:{fontsize:.1f}mm Depth:{depth:.1f}mm"
-        )
-    
-    def _start_combined_picking(self):
-        """Start combined position picking mode."""
-        if self.processor.orthosis_original is None:
-            QMessageBox.warning(self, "Warning", "Please load an orthosis STL first.")
-            return
-        
-        if self.processor.logo_mesh is None:
-            QMessageBox.warning(self, "Warning", "No logo loaded. Please add logo_v1.png or logo_v2.png to the logos/ folder.")
-            return
-        
-        patient_name = self.patient_name_edit.text().strip()
-        if not patient_name:
-            QMessageBox.warning(self, "Warning", "Please enter a patient name first.")
-            return
-        
-        self.viewer.set_combined_picking_mode(True)
-        self.status_bar.showMessage("Click on the mesh to place logo + text together")
-        self.pick_combined_btn.setStyleSheet("background-color: #FFD54F; font-weight: bold;")
-    
-    def _on_combined_position_picked(self, point: np.ndarray, normal: np.ndarray):
-        """Handle combined position pick."""
-        self._combined_position = point.copy()
-        self._combined_normal = normal.copy()
-        
-        # Add marker at position
-        self.viewer.add_position_marker(point, normal, color='green', scale=4.0)
-        
-        self.combined_pos_info.setText(f"Position: ({point[0]:.1f}, {point[1]:.1f}, {point[2]:.1f})")
-        self.combined_pos_info.setStyleSheet("color: green;")
-        self.status_bar.showMessage("Combined position set. Adjust sliders and click Apply Logo + Text.")
-        self.pick_combined_btn.setStyleSheet("font-weight: bold;")
-        
-        self._update_ui_state()
-    
-    def _apply_combined(self):
-        """Apply both logo and text in a single step."""
-        patient_name = self.patient_name_edit.text().strip()
-        if not patient_name:
-            QMessageBox.warning(self, "Warning", "Please enter a patient name.")
-            return
-        
-        if not hasattr(self, '_combined_position') or self._combined_position is None:
-            QMessageBox.warning(self, "Warning", "Please pick combined position first.")
-            return
-        
-        if self.processor.logo_mesh is None:
-            QMessageBox.warning(self, "Warning", "No logo loaded.")
-            return
-        
-        try:
-            self.status_bar.showMessage("Applying logo + text... please wait")
-            QApplication.processEvents()
-            
-            date_str = self.date_edit.text().strip()
-            text = f"{patient_name}\n{date_str}"
-            
-            # Get slider values
-            spacing = self.combined_spacing_slider.value()
-            scale = self.combined_scale_slider.value() / 100.0
-            fontsize = self.combined_fontsize_slider.value() / 10.0
-            depth = self.combined_depth_slider.value() / 10.0
-            
-            # Get layout
-            layout_idx = self.combined_layout_combo.currentIndex()
-            layout_map = {0: 'horizontal', 1: 'logo_above', 2: 'logo_below'}
-            layout = layout_map.get(layout_idx, 'horizontal')
-            
-            # Apply combined logo + text
-            self.processor.apply_logo_and_text_combined(
-                position=self._combined_position,
-                normal=self._combined_normal,
-                text=text,
-                logo_scale=scale,
-                text_font_size=fontsize,
-                spacing=spacing,
-                depth=depth,
-                layout=layout
-            )
-            
-            # Update viewer (don't reset camera)
-            self.viewer.set_both_meshes(self.processor.orthosis_mirrored, self.processor.orthosis_original, auto_reset=False)
-            
-            # Clear the markers
-            self.viewer.clear_all_markers()
-            
-            self._logo_applied = True
-            self._text_applied = True
-            self.combined_status.setText("Logo + Text applied")
-            self.combined_status.setStyleSheet("color: green;")
-            self.logo_status.setText("Applied via combined")
-            self.logo_status.setStyleSheet("color: green;")
-            self.text_status.setText("Applied via combined")
-            self.text_status.setStyleSheet("color: green;")
-            self.status_bar.showMessage("Logo + Text applied successfully!")
-            
-            self._update_ui_state()
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Combined application failed:\n{str(e)}")
-            self.status_bar.showMessage("Combined application failed")
-            import traceback
-            traceback.print_exc()
-    
     # === Reset ===
     
     def _reset_positions(self):
@@ -1937,8 +1718,6 @@ class MainWindow(QMainWindow):
         self._logo_normal = None
         self._text_position = None
         self._text_normal = None
-        self._combined_position = None
-        self._combined_normal = None
         self._logo_applied = False
         self._text_applied = False
         
@@ -1946,11 +1725,8 @@ class MainWindow(QMainWindow):
         self.logo_pos_info.setStyleSheet("color: gray;")
         self.text_pos_info.setText("Position: Not set")
         self.text_pos_info.setStyleSheet("color: gray;")
-        self.combined_pos_info.setText("Position: Not set")
-        self.combined_pos_info.setStyleSheet("color: gray;")
         self.logo_status.setText("")
         self.text_status.setText("")
-        self.combined_status.setText("")
         self.export_status.setText("")
         
         # Reset sliders

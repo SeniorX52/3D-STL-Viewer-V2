@@ -33,7 +33,6 @@ class DualMeshViewer(QWidget):
     # Signals for point picking on RIGHT viewport
     logo_point_picked = Signal(object, object)  # Emits (point, normal) for logo placement
     text_point_picked = Signal(object, object)  # Emits (point, normal) for text placement
-    combined_point_picked = Signal(object, object)  # Emits (point, normal) for combined logo+text placement
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -55,7 +54,6 @@ class DualMeshViewer(QWidget):
         # Picking mode
         self.logo_picking_enabled = False
         self.text_picking_enabled = False
-        self.combined_picking_enabled = False
         
         # Render mode: 'solid', 'wireframe', 'points'
         self._render_mode = 'solid'
@@ -203,7 +201,7 @@ class DualMeshViewer(QWidget):
     
     def _on_left_click(self, obj, event):
         """Handle left mouse click for point picking on RIGHT viewport."""
-        if not (self.logo_picking_enabled or self.text_picking_enabled or self.combined_picking_enabled):
+        if not (self.logo_picking_enabled or self.text_picking_enabled):
             return
         
         if self.right_mesh is None:
@@ -242,11 +240,6 @@ class DualMeshViewer(QWidget):
                 self._add_text_marker(point, normal)
                 self.text_point_picked.emit(point, normal)
                 self.set_text_picking_mode(False)
-            
-            elif self.combined_picking_enabled:
-                self._add_logo_marker(point, normal)  # Use green marker for combined
-                self.combined_point_picked.emit(point, normal)
-                self.set_combined_picking_mode(False)
     
     def _get_cell_normal(self, actor: vtk.vtkActor, cell_id: int) -> np.ndarray:
         """Get the normal vector of a specific cell."""
@@ -581,7 +574,6 @@ class DualMeshViewer(QWidget):
         """Enable or disable logo placement picking mode."""
         self.logo_picking_enabled = enabled
         self.text_picking_enabled = False
-        self.combined_picking_enabled = False
         
         if enabled:
             self.setCursor(Qt.CursorShape.CrossCursor)
@@ -598,29 +590,11 @@ class DualMeshViewer(QWidget):
         """Enable or disable text placement picking mode."""
         self.text_picking_enabled = enabled
         self.logo_picking_enabled = False
-        self.combined_picking_enabled = False
         
         if enabled:
             self.setCursor(Qt.CursorShape.CrossCursor)
             self.right_label_actor.SetInput("RIGHT (R) - Click to place TEXT")
             self.right_label_actor.GetTextProperty().SetColor(0.9, 0.9, 0.2)
-        else:
-            self.setCursor(Qt.CursorShape.ArrowCursor)
-            self.right_label_actor.SetInput("RIGHT (R) - Pick Here")
-            self.right_label_actor.GetTextProperty().SetColor(0.7, 0.7, 0.7)
-        
-        self.render()
-    
-    def set_combined_picking_mode(self, enabled: bool):
-        """Enable or disable combined logo+text placement picking mode."""
-        self.combined_picking_enabled = enabled
-        self.logo_picking_enabled = False
-        self.text_picking_enabled = False
-        
-        if enabled:
-            self.setCursor(Qt.CursorShape.CrossCursor)
-            self.right_label_actor.SetInput("RIGHT (R) - Click to place LOGO + TEXT")
-            self.right_label_actor.GetTextProperty().SetColor(0.2, 0.9, 0.5)
         else:
             self.setCursor(Qt.CursorShape.ArrowCursor)
             self.right_label_actor.SetInput("RIGHT (R) - Pick Here")
