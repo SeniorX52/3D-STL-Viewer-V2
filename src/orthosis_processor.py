@@ -1063,23 +1063,6 @@ class OrthosisProcessor:
         text_width = text_size[0]
         text_height = text_size[1]
         
-        # === ADD SMOOTH BACKING LAYER ===
-        # Create a high-poly backing layer to provide a clean surface for engraving
-        backing_margin = 2.0  # mm extra around text
-        backing_thickness = depth + 0.5  # Must be thicker than engraving depth
-        
-        backing = self._create_smooth_backing_layer(
-            target_mesh=mesh,
-            center_pos=position,
-            surface_normal=normal,
-            width=text_width + backing_margin * 2,
-            height=text_height + backing_margin * 2,
-            thickness=backing_thickness
-        )
-        
-        if backing is not None:
-            mesh = self._apply_backing_layer(mesh, backing)
-        
         # Wrap the text to follow the curved surface
         wrapped_text = self._wrap_mesh_to_surface(
             flat_mesh=text_mesh,
@@ -1095,6 +1078,17 @@ class OrthosisProcessor:
         try:
             result = self._meshlib_boolean_difference_on_mesh(mesh, wrapped_text)
             if result is not None:
+                # Add smooth infill layer inside the engraving to cover triangulation
+                infill = self._create_engraving_infill(
+                    target_mesh=result,
+                    center_pos=position,
+                    surface_normal=normal,
+                    width=text_width,
+                    height=text_height,
+                    depth=depth
+                )
+                if infill is not None:
+                    result = self._apply_engraving_infill(result, infill)
                 return result
         except Exception as e:
             print(f"Text boolean failed: {e}")
@@ -1329,24 +1323,6 @@ class OrthosisProcessor:
         logo_size = logo.bounds[1] - logo.bounds[0]
         logo_width = logo_size[0]
         logo_height = logo_size[1]
-        region_radius = max(logo_width, logo_height) * 0.6
-        
-        # === ADD SMOOTH BACKING LAYER ===
-        # Create a high-poly backing layer to provide a clean surface for engraving
-        backing_margin = 2.0  # mm extra around logo
-        backing_thickness = depth + 0.5  # Must be thicker than engraving depth
-        
-        backing = self._create_smooth_backing_layer(
-            target_mesh=mesh,
-            center_pos=position,
-            surface_normal=normal,
-            width=logo_width + backing_margin * 2,
-            height=logo_height + backing_margin * 2,
-            thickness=backing_thickness
-        )
-        
-        if backing is not None:
-            mesh = self._apply_backing_layer(mesh, backing)
         
         # Wrap the logo to follow the curved surface
         wrapped_logo = self._wrap_mesh_to_surface(
@@ -1363,6 +1339,17 @@ class OrthosisProcessor:
         try:
             result = self._meshlib_boolean_difference_on_mesh(mesh, wrapped_logo)
             if result is not None:
+                # Add smooth infill layer inside the engraving to cover triangulation
+                infill = self._create_engraving_infill(
+                    target_mesh=result,
+                    center_pos=position,
+                    surface_normal=normal,
+                    width=logo_width,
+                    height=logo_height,
+                    depth=depth
+                )
+                if infill is not None:
+                    result = self._apply_engraving_infill(result, infill)
                 return result
         except Exception as e:
             print(f"Logo boolean failed: {e}")
@@ -1420,37 +1407,39 @@ class OrthosisProcessor:
         
         return mesh
     
-    def _create_smooth_backing_layer(self,
-                                      target_mesh: trimesh.Trimesh,
-                                      center_pos: np.ndarray,
-                                      surface_normal: np.ndarray,
-                                      width: float,
-                                      height: float,
-                                      thickness: float = 0.8) -> Optional[trimesh.Trimesh]:
+    def _create_engraving_infill(self,
+                                  target_mesh: trimesh.Trimesh,
+                                  center_pos: np.ndarray,
+                                  surface_normal: np.ndarray,
+                                  width: float,
+                                  height: float,
+                                  depth: float,
+                                  infill_thickness: float = 0.15) -> Optional[trimesh.Trimesh]:
         """
-        Create a smooth, high-poly backing layer that follows the curved surface.
+        Create a smooth, high-poly infill layer that covers the bottom of an engraving.
         
-        This layer provides a clean surface for engraving, hiding the triangulation
-        artifacts from low-poly meshes underneath.
+        This layer is placed INSIDE the engraving to cover the rough triangulation
+        artifacts from the boolean operation on low-poly meshes.
         
         Args:
-            target_mesh: The mesh surface to conform to
-            center_pos: Center position on the surface
-            surface_normal: Normal vector at the center position
-            width: Width of the backing layer (slightly larger than logo/text)
-            height: Height of the backing layer
-            thickness: Thickness of the layer in mm (should be > engrave depth)
+            target_mesh: The mesh with the engraving already applied
+            center_pos: Center position on the original surface
+            surface_normal: Normal vector at the center position (pointing outward)
+            width: Width of the engraved area
+            height: Height of the engraved area  
+            depth: Engraving depth
+            infill_thickness: Thickness of the infill layer (thin is enough)
             
         Returns:
-            High-poly curved patch mesh, or None if creation fails
+            High-poly infill mesh, or None if creation fails
         """
         try:
-            print(f"Creating smooth backing layer: {width:.1f}x{height:.1f}mm, thickness={thickness:.1f}mm")
+            print(f"Creating smooth engraving infill: {width:.1f}x{height:.1f}mm at depth {depth:.2f}mm")
             
-            # Normalize the surface normal
+            # Normalize the surface normal (points outward from original surface)
             normal = surface_normal / np.linalg.norm(surface_normal)
             
-            # Build coordinate frame
+            # Build coordinate frame (same as wrapping)
             world_up = np.array([0.0, 0.0, 1.0])
             mesh_up = world_up.copy()
             
@@ -1461,31 +1450,32 @@ class OrthosisProcessor:
                 mesh_right = mesh_right / np.linalg.norm(mesh_right)
             mesh_right = -mesh_right  # Flip to match text orientation
             
-            # === CREATE HIGH-RESOLUTION GRID ===
-            # Use high density for smooth result (~0.5mm spacing)
-            grid_spacing = 0.5  # mm between grid points
-            num_x = max(20, int(width / grid_spacing) + 1)
-            num_y = max(20, int(height / grid_spacing) + 1)
+            # === CREATE HIGH-RESOLUTION GRID at engraving depth ===
+            # Use very high density for perfectly smooth bottom surface
+            grid_spacing = 0.3  # mm between grid points (very dense)
+            num_x = max(30, int(width / grid_spacing) + 1)
+            num_y = max(30, int(height / grid_spacing) + 1)
             
-            print(f"Backing layer grid: {num_x}x{num_y} = {num_x * num_y} vertices")
+            print(f"Infill grid: {num_x}x{num_y} = {num_x * num_y} vertices")
             
-            # Create grid coordinates
-            x_coords = np.linspace(-width / 2, width / 2, num_x)
-            y_coords = np.linspace(-height / 2, height / 2, num_y)
+            # Create grid coordinates (slightly smaller than full size to stay inside engraving)
+            margin = 0.2  # mm inset from edges
+            x_coords = np.linspace(-(width/2 - margin), (width/2 - margin), num_x)
+            y_coords = np.linspace(-(height/2 - margin), (height/2 - margin), num_y)
             xx, yy = np.meshgrid(x_coords, y_coords)
             
-            # === RAY CAST TO FIND SURFACE POSITIONS ===
             # Compute world positions for each grid point
             num_points = num_x * num_y
             x_flat = xx.ravel()
             y_flat = yy.ravel()
             
-            # Grid points in world space (on tangent plane)
+            # Grid points in world space on tangent plane at center
             grid_points = (center_pos.reshape(1, 3) + 
                           np.outer(x_flat, mesh_right) + 
                           np.outer(y_flat, mesh_up))
             
-            # Ray cast from above the surface
+            # === RAY CAST TO FIND SURFACE CURVATURE ===
+            # Cast from outside to find the original surface shape
             ray_origins = grid_points + normal * 50.0
             ray_directions = np.tile(-normal, (num_points, 1))
             
@@ -1494,11 +1484,10 @@ class OrthosisProcessor:
                 ray_directions=ray_directions
             )
             
-            # Build surface height grid
+            # Build surface curvature grid (where the original surface was)
             surface_positions = grid_points.copy()  # Fallback to tangent plane
             
             if len(locations) > 0:
-                # For each ray, find closest hit
                 for ray_idx in range(num_points):
                     mask = index_ray == ray_idx
                     if np.any(mask):
@@ -1507,17 +1496,18 @@ class OrthosisProcessor:
                         closest = hits[np.argmin(distances)]
                         surface_positions[ray_idx] = closest
             
-            # === BUILD MESH FROM GRID ===
-            # Create top surface (slightly above the mesh surface)
-            top_vertices = surface_positions + normal * 0.1  # Slightly above surface
+            # === BUILD INFILL MESH ===
+            # Top of infill: at engraving depth (following surface curvature)
+            # Bottom of infill: slightly deeper
             
-            # Create bottom surface (below surface by thickness)
-            bottom_vertices = surface_positions - normal * thickness
+            # Position infill at engraving depth - following surface curvature
+            top_vertices = surface_positions - normal * (depth - infill_thickness/2)
+            bottom_vertices = surface_positions - normal * (depth + infill_thickness/2)
             
-            # Combine vertices: top layer first, then bottom layer
+            # Combine vertices
             all_vertices = np.vstack([top_vertices, bottom_vertices])
             
-            # Create faces for top surface (triangulated grid)
+            # Create faces for the infill slab
             faces_list = []
             for j in range(num_y - 1):
                 for i in range(num_x - 1):
@@ -1527,115 +1517,111 @@ class OrthosisProcessor:
                     bl = (j + 1) * num_x + i
                     br = (j + 1) * num_x + i + 1
                     
-                    # Two triangles per quad (top surface - outward facing)
-                    faces_list.append([tl, bl, tr])
-                    faces_list.append([tr, bl, br])
+                    # Top surface (facing outward/up toward surface opening)
+                    faces_list.append([tl, tr, bl])
+                    faces_list.append([tr, br, bl])
                     
-                    # Bottom surface indices (offset by num_points)
+                    # Bottom surface indices
                     btl = tl + num_points
                     btr = tr + num_points
                     bbl = bl + num_points
                     bbr = br + num_points
                     
-                    # Two triangles per quad (bottom surface - inward facing)
-                    faces_list.append([btl, btr, bbl])
-                    faces_list.append([btr, bbr, bbl])
+                    # Bottom surface (facing inward/down)
+                    faces_list.append([btl, bbl, btr])
+                    faces_list.append([btr, bbl, bbr])
             
             # Add side faces to close the mesh
             # Top edge (j=0)
             for i in range(num_x - 1):
-                tl = i
-                tr = i + 1
-                btl = i + num_points
-                btr = i + 1 + num_points
-                faces_list.append([tl, tr, btl])
-                faces_list.append([tr, btr, btl])
+                tl, tr = i, i + 1
+                btl, btr = i + num_points, i + 1 + num_points
+                faces_list.append([tl, btl, tr])
+                faces_list.append([tr, btl, btr])
             
             # Bottom edge (j=num_y-1)
             for i in range(num_x - 1):
                 tl = (num_y - 1) * num_x + i
                 tr = (num_y - 1) * num_x + i + 1
-                btl = tl + num_points
-                btr = tr + num_points
-                faces_list.append([tl, btl, tr])
-                faces_list.append([tr, btl, btr])
+                btl, btr = tl + num_points, tr + num_points
+                faces_list.append([tl, tr, btl])
+                faces_list.append([tr, btr, btl])
             
             # Left edge (i=0)
             for j in range(num_y - 1):
-                top_curr = j * num_x
-                top_next = (j + 1) * num_x
-                bot_curr = top_curr + num_points
-                bot_next = top_next + num_points
-                faces_list.append([top_curr, bot_curr, top_next])
-                faces_list.append([top_next, bot_curr, bot_next])
+                top_curr, top_next = j * num_x, (j + 1) * num_x
+                bot_curr, bot_next = top_curr + num_points, top_next + num_points
+                faces_list.append([top_curr, top_next, bot_curr])
+                faces_list.append([top_next, bot_next, bot_curr])
             
             # Right edge (i=num_x-1)
             for j in range(num_y - 1):
                 top_curr = j * num_x + (num_x - 1)
                 top_next = (j + 1) * num_x + (num_x - 1)
-                bot_curr = top_curr + num_points
-                bot_next = top_next + num_points
-                faces_list.append([top_curr, top_next, bot_curr])
-                faces_list.append([top_next, bot_next, bot_curr])
+                bot_curr, bot_next = top_curr + num_points, top_next + num_points
+                faces_list.append([top_curr, bot_curr, top_next])
+                faces_list.append([top_next, bot_curr, bot_next])
             
             faces = np.array(faces_list)
             
             # Create the mesh
-            backing_mesh = trimesh.Trimesh(vertices=all_vertices, faces=faces)
-            backing_mesh.fix_normals()
+            infill_mesh = trimesh.Trimesh(vertices=all_vertices, faces=faces)
+            infill_mesh.fix_normals()
             
-            print(f"Backing layer created: {len(backing_mesh.vertices)} vertices, {len(backing_mesh.faces)} faces")
+            print(f"Engraving infill created: {len(infill_mesh.vertices)} vertices, {len(infill_mesh.faces)} faces")
             
-            return backing_mesh
+            return infill_mesh
             
         except Exception as e:
-            print(f"Failed to create backing layer: {e}")
+            print(f"Failed to create engraving infill: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
-    def _apply_backing_layer(self,
-                              mesh: trimesh.Trimesh,
-                              backing: trimesh.Trimesh) -> trimesh.Trimesh:
+    def _apply_engraving_infill(self,
+                                 mesh: trimesh.Trimesh,
+                                 infill: trimesh.Trimesh) -> trimesh.Trimesh:
         """
-        Boolean-union the backing layer onto the target mesh.
+        Boolean-union the infill layer into the mesh to cover rough engraving bottom.
         
         Args:
-            mesh: Target mesh
-            backing: Backing layer mesh
+            mesh: Mesh with engraving
+            infill: Smooth infill mesh
             
         Returns:
-            Mesh with backing layer added
+            Mesh with smooth infill applied
         """
         try:
             import meshlib.mrmeshpy as mr
             import tempfile
             import os
             
-            print("Applying backing layer via boolean union...")
+            print("Applying engraving infill via boolean union...")
             
             with tempfile.TemporaryDirectory() as tmpdir:
                 mesh_path = os.path.join(tmpdir, "mesh.stl")
-                backing_path = os.path.join(tmpdir, "backing.stl")
+                infill_path = os.path.join(tmpdir, "infill.stl")
                 result_path = os.path.join(tmpdir, "result.stl")
                 
                 mesh.export(mesh_path)
-                backing.export(backing_path)
+                infill.export(infill_path)
                 
                 mesh_mr = mr.loadMesh(mesh_path)
-                backing_mr = mr.loadMesh(backing_path)
+                infill_mr = mr.loadMesh(infill_path)
                 
-                # Boolean union
-                result = mr.boolean(mesh_mr, backing_mr, mr.BooleanOperation.Union)
+                # Boolean union adds the smooth infill to cover rough bottom
+                result = mr.boolean(mesh_mr, infill_mr, mr.BooleanOperation.Union)
                 
                 if result.valid() and result.mesh.topology.numValidFaces() > 0:
                     mr.saveMesh(result.mesh, result_path)
                     result_mesh = trimesh.load(result_path, force='mesh')
                     if result_mesh is not None and len(result_mesh.vertices) > 0:
                         result_mesh.fix_normals()
-                        print(f"Backing layer applied: {len(result_mesh.faces)} faces")
+                        print(f"Engraving infill applied: {len(result_mesh.faces)} faces")
                         return result_mesh
                         
         except Exception as e:
-            print(f"Backing layer union failed: {e}")
+            print(f"Engraving infill union failed: {e}")
         
         return mesh
 
