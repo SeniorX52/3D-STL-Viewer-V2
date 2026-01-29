@@ -336,6 +336,68 @@ class SettingsDialog(QDialog):
         self.mirror_logo_check.setToolTip("If checked, logo will be flipped horizontally on left side")
         layout.addRow("", self.mirror_logo_check)
         
+        # --- Slider Defaults Section ---
+        layout.addRow(QLabel("<b>Slider Defaults</b>"))
+        
+        # Default logo scale
+        self.default_logo_scale_spin = QSpinBox()
+        self.default_logo_scale_spin.setRange(50, 200)
+        self.default_logo_scale_spin.setValue(100)
+        self.default_logo_scale_spin.setSuffix(" %")
+        self.default_logo_scale_spin.setToolTip("Default logo scale percentage")
+        layout.addRow("Logo Scale:", self.default_logo_scale_spin)
+        
+        # Default text size
+        self.default_text_size_spin = QDoubleSpinBox()
+        self.default_text_size_spin.setRange(2.0, 10.0)
+        self.default_text_size_spin.setSingleStep(0.1)
+        self.default_text_size_spin.setValue(4.0)
+        self.default_text_size_spin.setSuffix(" mm")
+        self.default_text_size_spin.setToolTip("Default text font size")
+        layout.addRow("Font Size:", self.default_text_size_spin)
+        
+        # Default text spacing
+        self.default_text_spacing_spin = QDoubleSpinBox()
+        self.default_text_spacing_spin.setRange(0.0, 10.0)
+        self.default_text_spacing_spin.setSingleStep(0.5)
+        self.default_text_spacing_spin.setValue(6.0)
+        self.default_text_spacing_spin.setSuffix(" mm")
+        self.default_text_spacing_spin.setToolTip("Default spacing between logo and text")
+        layout.addRow("Text Spacing:", self.default_text_spacing_spin)
+        
+        # Default offset X
+        self.default_offset_x_spin = QSpinBox()
+        self.default_offset_x_spin.setRange(-50, 50)
+        self.default_offset_x_spin.setValue(0)
+        self.default_offset_x_spin.setSuffix(" mm")
+        self.default_offset_x_spin.setToolTip("Default horizontal offset")
+        layout.addRow("Offset X:", self.default_offset_x_spin)
+        
+        # Default offset Y
+        self.default_offset_y_spin = QSpinBox()
+        self.default_offset_y_spin.setRange(-50, 50)
+        self.default_offset_y_spin.setValue(0)
+        self.default_offset_y_spin.setSuffix(" mm")
+        self.default_offset_y_spin.setToolTip("Default vertical offset")
+        layout.addRow("Offset Y:", self.default_offset_y_spin)
+        
+        # Default rotation
+        self.default_rotation_spin = QSpinBox()
+        self.default_rotation_spin.setRange(-180, 180)
+        self.default_rotation_spin.setValue(0)
+        self.default_rotation_spin.setSuffix(" °")
+        self.default_rotation_spin.setToolTip("Default rotation angle")
+        layout.addRow("Rotation:", self.default_rotation_spin)
+        
+        # Default engrave depth
+        self.default_engrave_depth_spin = QDoubleSpinBox()
+        self.default_engrave_depth_spin.setRange(0.3, 2.0)
+        self.default_engrave_depth_spin.setSingleStep(0.1)
+        self.default_engrave_depth_spin.setValue(0.6)
+        self.default_engrave_depth_spin.setSuffix(" mm")
+        self.default_engrave_depth_spin.setToolTip("Default engraving depth for both logo and text")
+        layout.addRow("Engrave Depth:", self.default_engrave_depth_spin)
+        
         self.tab_widget.addTab(tab, "Engraving")
     
     def _create_logo_tab(self):
@@ -522,6 +584,15 @@ class SettingsDialog(QDialog):
         self.mirror_engraving_check.setChecked(self.settings.value('engrave/mirror_engraving', True, type=bool))
         self.mirror_logo_check.setChecked(self.settings.value('engrave/mirror_logo', False, type=bool))
         
+        # Slider Defaults
+        self.default_logo_scale_spin.setValue(self.settings.value('engrave/default_logo_scale', 100, type=int))
+        self.default_text_size_spin.setValue(self.settings.value('engrave/default_text_size', 4.0, type=float))
+        self.default_text_spacing_spin.setValue(self.settings.value('engrave/default_text_spacing', 6.0, type=float))
+        self.default_offset_x_spin.setValue(self.settings.value('engrave/default_offset_x', 0, type=int))
+        self.default_offset_y_spin.setValue(self.settings.value('engrave/default_offset_y', 0, type=int))
+        self.default_rotation_spin.setValue(self.settings.value('engrave/default_rotation', 0, type=int))
+        self.default_engrave_depth_spin.setValue(self.settings.value('engrave/default_engrave_depth', 0.6, type=float))
+        
         # Logo
         self.logo_size_spin.setValue(self.settings.value('logo/size', 25.0, type=float))
         self.logo_simplify_spin.setValue(self.settings.value('logo/simplify', 0.5, type=float))
@@ -588,6 +659,15 @@ class SettingsDialog(QDialog):
         self.settings.setValue('engrave/surface_samples', self.surface_samples_spin.value())
         self.settings.setValue('engrave/mirror_engraving', self.mirror_engraving_check.isChecked())
         self.settings.setValue('engrave/mirror_logo', self.mirror_logo_check.isChecked())
+        
+        # Slider Defaults
+        self.settings.setValue('engrave/default_logo_scale', self.default_logo_scale_spin.value())
+        self.settings.setValue('engrave/default_text_size', self.default_text_size_spin.value())
+        self.settings.setValue('engrave/default_text_spacing', self.default_text_spacing_spin.value())
+        self.settings.setValue('engrave/default_offset_x', self.default_offset_x_spin.value())
+        self.settings.setValue('engrave/default_offset_y', self.default_offset_y_spin.value())
+        self.settings.setValue('engrave/default_rotation', self.default_rotation_spin.value())
+        self.settings.setValue('engrave/default_engrave_depth', self.default_engrave_depth_spin.value())
         
         # Logo
         self.settings.setValue('logo/size', self.logo_size_spin.value())
@@ -666,6 +746,15 @@ class SettingsDialog(QDialog):
         self.surface_samples_spin.setValue(30)
         self.mirror_engraving_check.setChecked(True)
         self.mirror_logo_check.setChecked(False)
+        
+        # Slider Defaults
+        self.default_logo_scale_spin.setValue(100)
+        self.default_text_size_spin.setValue(4.0)
+        self.default_text_spacing_spin.setValue(6.0)
+        self.default_offset_x_spin.setValue(0)
+        self.default_offset_y_spin.setValue(0)
+        self.default_rotation_spin.setValue(0)
+        self.default_engrave_depth_spin.setValue(0.6)
         
         # Logo
         self.logo_size_spin.setValue(25.0)
@@ -776,13 +865,18 @@ class MainWindow(QMainWindow):
         # Current file path
         self.orthosis_file_path: Optional[str] = None
         
-        # Placement state
+        # Engraving placement state (unified)
+        self._engrave_position: Optional[np.ndarray] = None
+        self._engrave_normal: Optional[np.ndarray] = None
+        
+        # Track if engraving has been applied
+        self._engraving_applied = False
+        
+        # Legacy state variables (for compatibility)
         self._logo_position: Optional[np.ndarray] = None
         self._logo_normal: Optional[np.ndarray] = None
         self._text_position: Optional[np.ndarray] = None
         self._text_normal: Optional[np.ndarray] = None
-        
-        # Track if logo/text have been applied
         self._logo_applied = False
         self._text_applied = False
         
@@ -953,9 +1047,13 @@ class MainWindow(QMainWindow):
         
         layout.addWidget(load_group)
         
-        # === Step 2: Logo ===
-        logo_group = QGroupBox("2. Logo Engraving")
-        logo_layout = QGridLayout(logo_group)
+        # === Step 2: Engraving (Logo + Text) ===
+        engrave_group = QGroupBox("2. Engraving")
+        engrave_layout = QGridLayout(engrave_group)
+        
+        # --- Logo Section ---
+        logo_header = QLabel("<b>Logo</b>")
+        engrave_layout.addWidget(logo_header, 0, 0, 1, 2)
         
         # Logo preview
         self.logo_preview = QLabel()
@@ -963,10 +1061,10 @@ class MainWindow(QMainWindow):
         self.logo_preview.setAlignment(Qt.AlignCenter)
         self.logo_preview.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc; border-radius: 4px;")
         self.logo_preview.setText("No logo selected")
-        logo_layout.addWidget(self.logo_preview, 0, 0, 1, 2)
+        engrave_layout.addWidget(self.logo_preview, 1, 0, 1, 2)
         
         # Logo selection
-        logo_layout.addWidget(QLabel("Select Logo:"), 1, 0)
+        engrave_layout.addWidget(QLabel("Select Logo:"), 2, 0)
         logo_btn_layout = QHBoxLayout()
         self.logo_v1_btn = QPushButton("Logo V1")
         self.logo_v1_btn.setCheckable(True)
@@ -980,182 +1078,132 @@ class MainWindow(QMainWindow):
         self.logo_v2_btn.setStyleSheet("font-weight: bold;")
         self.logo_v2_btn.clicked.connect(lambda: self._select_logo(2))
         logo_btn_layout.addWidget(self.logo_v2_btn)
-        logo_layout.addLayout(logo_btn_layout, 1, 1)
+        engrave_layout.addLayout(logo_btn_layout, 2, 1)
         
-        # Pick position button
-        self.pick_logo_btn = QPushButton("Pick Logo Position")
-        self.pick_logo_btn.setMinimumHeight(30)
-        self.pick_logo_btn.setStyleSheet("font-weight: bold;")
-        self.pick_logo_btn.clicked.connect(self._start_logo_picking)
-        logo_layout.addWidget(self.pick_logo_btn, 2, 0, 1, 2)
-        
-        self.logo_pos_info = QLabel("Position: Not set")
-        self.logo_pos_info.setStyleSheet("color: gray;")
-        logo_layout.addWidget(self.logo_pos_info, 3, 0, 1, 2)
-        
-        # Logo offset sliders
-        row = 4
-        logo_layout.addWidget(QLabel("Offset X:"), row, 0)
-        self.logo_offset_x_slider = NoWheelSlider(Qt.Orientation.Horizontal)
-        self.logo_offset_x_slider.setRange(-50, 50)
-        self.logo_offset_x_slider.setValue(0)
-        self.logo_offset_x_slider.valueChanged.connect(self._on_logo_slider_changed)
-        logo_layout.addWidget(self.logo_offset_x_slider, row, 1)
-        
-        row += 1
-        logo_layout.addWidget(QLabel("Offset Y:"), row, 0)
-        self.logo_offset_y_slider = NoWheelSlider(Qt.Orientation.Horizontal)
-        self.logo_offset_y_slider.setRange(-50, 50)
-        self.logo_offset_y_slider.setValue(0)
-        self.logo_offset_y_slider.valueChanged.connect(self._on_logo_slider_changed)
-        logo_layout.addWidget(self.logo_offset_y_slider, row, 1)
-        
-        row += 1
-        logo_layout.addWidget(QLabel("Rotation:"), row, 0)
-        self.logo_rotation_slider = NoWheelSlider(Qt.Orientation.Horizontal)
-        self.logo_rotation_slider.setRange(-180, 180)
-        self.logo_rotation_slider.setValue(0)
-        self.logo_rotation_slider.valueChanged.connect(self._on_logo_slider_changed)
-        logo_layout.addWidget(self.logo_rotation_slider, row, 1)
-        
-        row += 1
-        logo_layout.addWidget(QLabel("Scale:"), row, 0)
+        # Logo Scale slider
+        self.logo_scale_label = QLabel("Logo Scale: 100%")
+        engrave_layout.addWidget(self.logo_scale_label, 3, 0)
         self.logo_scale_slider = NoWheelSlider(Qt.Orientation.Horizontal)
         self.logo_scale_slider.setRange(50, 200)  # 50% to 200%
         self.logo_scale_slider.setValue(100)
-        self.logo_scale_slider.valueChanged.connect(self._on_logo_slider_changed)
-        logo_layout.addWidget(self.logo_scale_slider, row, 1)
+        self.logo_scale_slider.valueChanged.connect(self._on_engrave_slider_changed)
+        engrave_layout.addWidget(self.logo_scale_slider, 3, 1)
         
-        row += 1
-        logo_layout.addWidget(QLabel("Depth:"), row, 0)
-        self.logo_depth_slider = NoWheelSlider(Qt.Orientation.Horizontal)
-        self.logo_depth_slider.setRange(3, 20)  # 0.3mm to 2.0mm
-        self.logo_depth_slider.setValue(6)  # 0.6mm default
-        self.logo_depth_slider.valueChanged.connect(self._on_logo_slider_changed)
-        logo_layout.addWidget(self.logo_depth_slider, row, 1)
+        # --- Separator ---
+        separator1 = QFrame()
+        separator1.setFrameShape(QFrame.Shape.HLine)
+        separator1.setStyleSheet("color: #555;")
+        engrave_layout.addWidget(separator1, 4, 0, 1, 2)
         
-        # Slider value labels
-        self.logo_slider_info = QLabel("X:0 Y:0 Rot:0 Scale:100% Depth:0.6mm")
-        self.logo_slider_info.setStyleSheet("color: gray; font-size: 10px;")
-        row += 1
-        logo_layout.addWidget(self.logo_slider_info, row, 0, 1, 2)
+        # --- Text Section ---
+        text_header = QLabel("<b>Text (Optional)</b>")
+        engrave_layout.addWidget(text_header, 5, 0, 1, 2)
         
-        # Apply logo button
-        row += 1
-        self.apply_logo_btn = QPushButton("Apply Logo")
-        self.apply_logo_btn.setMinimumHeight(35)
-        self.apply_logo_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
-        self.apply_logo_btn.clicked.connect(self._apply_logo)
-        logo_layout.addWidget(self.apply_logo_btn, row, 0, 1, 2)
-        
-        # Reset logo button
-        row += 1
-        self.reset_logo_btn = QPushButton("Reset Logo")
-        self.reset_logo_btn.setStyleSheet("font-weight: bold;")
-        self.reset_logo_btn.clicked.connect(self._reset_logo)
-        logo_layout.addWidget(self.reset_logo_btn, row, 0, 1, 2)
-        
-        self.logo_status = QLabel("")
-        row += 1
-        logo_layout.addWidget(self.logo_status, row, 0, 1, 2)
-        
-        layout.addWidget(logo_group)
-        
-        # === Step 3: Text Engraving ===
-        text_group = QGroupBox("3. Text Engraving")
-        text_layout = QGridLayout(text_group)
-        
-        text_layout.addWidget(QLabel("Patient Name:"), 0, 0)
+        engrave_layout.addWidget(QLabel("Patient Name:"), 6, 0)
         self.patient_name_edit = QLineEdit()
         self.patient_name_edit.setPlaceholderText("Enter patient name")
-        text_layout.addWidget(self.patient_name_edit, 0, 1)
+        engrave_layout.addWidget(self.patient_name_edit, 6, 1)
         
-        text_layout.addWidget(QLabel("Date:"), 1, 0)
+        engrave_layout.addWidget(QLabel("Date:"), 7, 0)
         self.date_edit = QLineEdit()
         self.date_edit.setText(datetime.now().strftime("%Y-%m-%d"))
-        text_layout.addWidget(self.date_edit, 1, 1)
+        engrave_layout.addWidget(self.date_edit, 7, 1)
         
-        # Pick text position
-        self.pick_text_btn = QPushButton("Pick Text Position")
-        self.pick_text_btn.setMinimumHeight(30)
-        self.pick_text_btn.setStyleSheet("font-weight: bold;")
-        self.pick_text_btn.clicked.connect(self._start_text_picking)
-        text_layout.addWidget(self.pick_text_btn, 2, 0, 1, 2)
-        
-        self.text_pos_info = QLabel("Position: Not set")
-        self.text_pos_info.setStyleSheet("color: gray;")
-        text_layout.addWidget(self.text_pos_info, 3, 0, 1, 2)
-        
-        # Text offset sliders
-        row = 4
-        text_layout.addWidget(QLabel("Offset X:"), row, 0)
-        self.text_offset_x_slider = NoWheelSlider(Qt.Orientation.Horizontal)
-        self.text_offset_x_slider.setRange(-50, 50)
-        self.text_offset_x_slider.setValue(0)
-        self.text_offset_x_slider.valueChanged.connect(self._on_text_slider_changed)
-        text_layout.addWidget(self.text_offset_x_slider, row, 1)
-        
-        row += 1
-        text_layout.addWidget(QLabel("Offset Y:"), row, 0)
-        self.text_offset_y_slider = NoWheelSlider(Qt.Orientation.Horizontal)
-        self.text_offset_y_slider.setRange(-50, 50)
-        self.text_offset_y_slider.setValue(0)
-        self.text_offset_y_slider.valueChanged.connect(self._on_text_slider_changed)
-        text_layout.addWidget(self.text_offset_y_slider, row, 1)
-        
-        row += 1
-        text_layout.addWidget(QLabel("Rotation:"), row, 0)
-        self.text_rotation_slider = NoWheelSlider(Qt.Orientation.Horizontal)
-        self.text_rotation_slider.setRange(-180, 180)
-        self.text_rotation_slider.setValue(0)
-        self.text_rotation_slider.valueChanged.connect(self._on_text_slider_changed)
-        text_layout.addWidget(self.text_rotation_slider, row, 1)
-        
-        row += 1
-        text_layout.addWidget(QLabel("Font Size:"), row, 0)
+        # Font Size slider
+        self.text_size_label = QLabel("Font Size: 4.0mm")
+        engrave_layout.addWidget(self.text_size_label, 8, 0)
         self.text_size_slider = NoWheelSlider(Qt.Orientation.Horizontal)
         self.text_size_slider.setRange(20, 100)  # 2.0 to 10.0 mm
         self.text_size_slider.setValue(40)  # 4.0mm default
-        self.text_size_slider.valueChanged.connect(self._on_text_slider_changed)
-        text_layout.addWidget(self.text_size_slider, row, 1)
+        self.text_size_slider.valueChanged.connect(self._on_engrave_slider_changed)
+        engrave_layout.addWidget(self.text_size_slider, 8, 1)
         
-        row += 1
-        text_layout.addWidget(QLabel("Depth:"), row, 0)
-        self.text_depth_slider = NoWheelSlider(Qt.Orientation.Horizontal)
-        self.text_depth_slider.setRange(1, 30)  # 0.1 to 3.0 mm
-        self.text_depth_slider.setValue(6)  # 0.6mm default
-        self.text_depth_slider.valueChanged.connect(self._on_text_slider_changed)
-        text_layout.addWidget(self.text_depth_slider, row, 1)
+        # Spacing between logo and text
+        self.text_spacing_label = QLabel("Text Spacing: 6.0mm")
+        engrave_layout.addWidget(self.text_spacing_label, 9, 0)
+        self.text_spacing_slider = NoWheelSlider(Qt.Orientation.Horizontal)
+        self.text_spacing_slider.setRange(0, 100)  # 0 to 10mm (value / 10)
+        self.text_spacing_slider.setValue(60)  # 6.0mm default
+        self.text_spacing_slider.valueChanged.connect(self._on_engrave_slider_changed)
+        engrave_layout.addWidget(self.text_spacing_slider, 9, 1)
         
-        # Slider value labels
-        self.text_slider_info = QLabel("X:0 Y:0 Rot:0 Size:4.0mm Depth:0.6mm")
-        self.text_slider_info.setStyleSheet("color: gray; font-size: 10px;")
-        row += 1
-        text_layout.addWidget(self.text_slider_info, row, 0, 1, 2)
+        # --- Separator ---
+        separator2 = QFrame()
+        separator2.setFrameShape(QFrame.Shape.HLine)
+        separator2.setStyleSheet("color: #555;")
+        engrave_layout.addWidget(separator2, 10, 0, 1, 2)
         
-        # Apply text button
-        row += 1
-        self.apply_text_btn = QPushButton("Apply Text")
-        self.apply_text_btn.setMinimumHeight(35)
-        self.apply_text_btn.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
-        self.apply_text_btn.clicked.connect(self._apply_text)
-        text_layout.addWidget(self.apply_text_btn, row, 0, 1, 2)
+        # --- Position & Transform Section ---
+        position_header = QLabel("<b>Position & Transform</b>")
+        engrave_layout.addWidget(position_header, 11, 0, 1, 2)
         
-        # Reset text button
-        row += 1
-        self.reset_text_btn = QPushButton("Reset Text")
-        self.reset_text_btn.setStyleSheet("font-weight: bold;")
-        self.reset_text_btn.clicked.connect(self._reset_text)
-        text_layout.addWidget(self.reset_text_btn, row, 0, 1, 2)
+        # Pick position button
+        self.pick_engrave_btn = QPushButton("Pick Engraving Position")
+        self.pick_engrave_btn.setMinimumHeight(30)
+        self.pick_engrave_btn.setStyleSheet("font-weight: bold;")
+        self.pick_engrave_btn.clicked.connect(self._start_engrave_picking)
+        engrave_layout.addWidget(self.pick_engrave_btn, 12, 0, 1, 2)
         
-        self.text_status = QLabel("")
-        row += 1
-        text_layout.addWidget(self.text_status, row, 0, 1, 2)
+        self.engrave_pos_info = QLabel("Position: Not set")
+        self.engrave_pos_info.setStyleSheet("color: gray;")
+        engrave_layout.addWidget(self.engrave_pos_info, 13, 0, 1, 2)
         
-        layout.addWidget(text_group)
+        # Offset X slider
+        self.offset_x_label = QLabel("Offset X: 0")
+        engrave_layout.addWidget(self.offset_x_label, 14, 0)
+        self.engrave_offset_x_slider = NoWheelSlider(Qt.Orientation.Horizontal)
+        self.engrave_offset_x_slider.setRange(-50, 50)
+        self.engrave_offset_x_slider.setValue(0)
+        self.engrave_offset_x_slider.valueChanged.connect(self._on_engrave_slider_changed)
+        engrave_layout.addWidget(self.engrave_offset_x_slider, 14, 1)
         
-        # === Step 4: Export ===
-        export_group = QGroupBox("4. Export STL Files")
+        # Offset Y slider
+        self.offset_y_label = QLabel("Offset Y: 0")
+        engrave_layout.addWidget(self.offset_y_label, 15, 0)
+        self.engrave_offset_y_slider = NoWheelSlider(Qt.Orientation.Horizontal)
+        self.engrave_offset_y_slider.setRange(-50, 50)
+        self.engrave_offset_y_slider.setValue(0)
+        self.engrave_offset_y_slider.valueChanged.connect(self._on_engrave_slider_changed)
+        engrave_layout.addWidget(self.engrave_offset_y_slider, 15, 1)
+        
+        # Rotation slider (affects both logo and text)
+        self.rotation_label = QLabel("Rotation: 0°")
+        engrave_layout.addWidget(self.rotation_label, 16, 0)
+        self.engrave_rotation_slider = NoWheelSlider(Qt.Orientation.Horizontal)
+        self.engrave_rotation_slider.setRange(-180, 180)
+        self.engrave_rotation_slider.setValue(0)
+        self.engrave_rotation_slider.valueChanged.connect(self._on_engrave_slider_changed)
+        engrave_layout.addWidget(self.engrave_rotation_slider, 16, 1)
+        
+        # Engrave Depth slider (common for logo and text)
+        self.engrave_depth_label = QLabel("Engrave Depth: 0.6mm")
+        engrave_layout.addWidget(self.engrave_depth_label, 17, 0)
+        self.engrave_depth_slider = NoWheelSlider(Qt.Orientation.Horizontal)
+        self.engrave_depth_slider.setRange(3, 20)  # 0.3mm to 2.0mm
+        self.engrave_depth_slider.setValue(6)  # 0.6mm default
+        self.engrave_depth_slider.valueChanged.connect(self._on_engrave_slider_changed)
+        engrave_layout.addWidget(self.engrave_depth_slider, 17, 1)
+        
+        # Engrave button
+        self.engrave_btn = QPushButton("Engrave")
+        self.engrave_btn.setMinimumHeight(40)
+        self.engrave_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; font-size: 14px;")
+        self.engrave_btn.clicked.connect(self._apply_engraving)
+        engrave_layout.addWidget(self.engrave_btn, 18, 0, 1, 2)
+        
+        # Reset button
+        self.reset_engrave_btn = QPushButton("Reset Engraving")
+        self.reset_engrave_btn.setStyleSheet("font-weight: bold;")
+        self.reset_engrave_btn.clicked.connect(self._reset_engraving)
+        engrave_layout.addWidget(self.reset_engrave_btn, 19, 0, 1, 2)
+        
+        self.engrave_status = QLabel("")
+        engrave_layout.addWidget(self.engrave_status, 20, 0, 1, 2)
+        
+        layout.addWidget(engrave_group)
+        
+        # === Step 3: Export ===
+        export_group = QGroupBox("3. Export STL Files")
         export_layout = QVBoxLayout(export_group)
         
         # Export both button
@@ -1217,65 +1265,86 @@ class MainWindow(QMainWindow):
     
     def _connect_signals(self):
         """Connect Qt signals to slots."""
-        self.viewer.logo_point_picked.connect(self._on_logo_picked)
-        self.viewer.text_point_picked.connect(self._on_text_picked)
+        self.viewer.logo_point_picked.connect(self._on_engrave_picked)
+        self.viewer.text_point_picked.connect(self._on_engrave_picked)
+        
+        # Initialize slider values from saved defaults
+        self._load_slider_defaults()
+    
+    def _load_slider_defaults(self):
+        """Load slider default values from settings."""
+        # Get default values from settings
+        logo_scale = self.settings.value('engrave/default_logo_scale', 100, type=int)
+        text_size = int(self.settings.value('engrave/default_text_size', 4.0, type=float) * 10)
+        text_spacing = int(self.settings.value('engrave/default_text_spacing', 6.0, type=float) * 10)
+        offset_x = self.settings.value('engrave/default_offset_x', 0, type=int)
+        offset_y = self.settings.value('engrave/default_offset_y', 0, type=int)
+        rotation = self.settings.value('engrave/default_rotation', 0, type=int)
+        engrave_depth = int(self.settings.value('engrave/default_engrave_depth', 0.6, type=float) * 10)
+        
+        # Apply to sliders
+        self.logo_scale_slider.setValue(logo_scale)
+        self.text_size_slider.setValue(text_size)
+        self.text_spacing_slider.setValue(text_spacing)
+        self.engrave_offset_x_slider.setValue(offset_x)
+        self.engrave_offset_y_slider.setValue(offset_y)
+        self.engrave_rotation_slider.setValue(rotation)
+        self.engrave_depth_slider.setValue(engrave_depth)
+        
+        # Update labels
+        self._on_engrave_slider_changed()
     
     def _update_ui_state(self):
         """Update UI enabled/disabled states."""
         has_mesh = self.processor.orthosis_mesh is not None
-        has_logo_pos = self._logo_position is not None
-        has_text_pos = self._text_position is not None
-        has_patient_name = len(self.patient_name_edit.text().strip()) > 0
+        has_engrave_pos = self._engrave_position is not None
         
         # Enable controls based on state
         self.logo_v1_btn.setEnabled(has_mesh)
         self.logo_v2_btn.setEnabled(has_mesh)
-        self.pick_logo_btn.setEnabled(has_mesh)
-        self.pick_text_btn.setEnabled(has_mesh)
+        self.pick_engrave_btn.setEnabled(has_mesh)
         self.patient_name_edit.setEnabled(has_mesh)
         self.date_edit.setEnabled(has_mesh)
         
-        # Logo sliders and button
-        self.logo_offset_x_slider.setEnabled(has_logo_pos)
-        self.logo_offset_y_slider.setEnabled(has_logo_pos)
-        self.logo_rotation_slider.setEnabled(has_logo_pos)
-        self.logo_scale_slider.setEnabled(has_logo_pos)
-        self.logo_depth_slider.setEnabled(has_logo_pos)
-        self.apply_logo_btn.setEnabled(has_logo_pos and has_mesh)
-        self.reset_logo_btn.setEnabled(self._logo_applied)
+        # Engraving sliders
+        self.logo_scale_slider.setEnabled(has_engrave_pos)
+        self.text_size_slider.setEnabled(has_engrave_pos)
+        self.text_spacing_slider.setEnabled(has_engrave_pos)
+        self.engrave_offset_x_slider.setEnabled(has_engrave_pos)
+        self.engrave_offset_y_slider.setEnabled(has_engrave_pos)
+        self.engrave_rotation_slider.setEnabled(has_engrave_pos)
+        self.engrave_depth_slider.setEnabled(has_engrave_pos)
         
-        # Text sliders and button
-        self.text_offset_x_slider.setEnabled(has_text_pos)
-        self.text_offset_y_slider.setEnabled(has_text_pos)
-        self.text_rotation_slider.setEnabled(has_text_pos)
-        self.text_size_slider.setEnabled(has_text_pos)
-        self.apply_text_btn.setEnabled(has_text_pos and has_patient_name)
+        # Engrave button
+        self.engrave_btn.setEnabled(has_engrave_pos and has_mesh)
+        self.reset_engrave_btn.setEnabled(self._engraving_applied)
         
-        # Export requires at least one applied
-        can_export = has_mesh and (self._logo_applied or self._text_applied)
+        # Export requires engraving applied
+        can_export = has_mesh and self._engraving_applied
         self.export_btn.setEnabled(can_export)
         self.export_left_btn.setEnabled(can_export)
         self.export_right_btn.setEnabled(can_export)
     
     # === Slider handlers ===
     
-    def _on_logo_slider_changed(self):
-        """Update logo slider info label."""
-        ox = self.logo_offset_x_slider.value()
-        oy = self.logo_offset_y_slider.value()
-        rot = self.logo_rotation_slider.value()
+    def _on_engrave_slider_changed(self):
+        """Update slider value labels."""
         scale = self.logo_scale_slider.value()
-        depth = self.logo_depth_slider.value() / 10.0
-        self.logo_slider_info.setText(f"X:{ox} Y:{oy} Rot:{rot} Scale:{scale}% Depth:{depth:.1f}mm")
-    
-    def _on_text_slider_changed(self):
-        """Update text slider info label."""
-        ox = self.text_offset_x_slider.value()
-        oy = self.text_offset_y_slider.value()
-        rot = self.text_rotation_slider.value()
-        size = self.text_size_slider.value() / 10.0
-        depth = self.text_depth_slider.value() / 10.0
-        self.text_slider_info.setText(f"X:{ox} Y:{oy} Rot:{rot} Size:{size:.1f}mm Depth:{depth:.1f}mm")
+        font_size = self.text_size_slider.value() / 10.0
+        spacing = self.text_spacing_slider.value() / 10.0
+        ox = self.engrave_offset_x_slider.value()
+        oy = self.engrave_offset_y_slider.value()
+        rot = self.engrave_rotation_slider.value()
+        depth = self.engrave_depth_slider.value() / 10.0
+        
+        # Update individual labels
+        self.logo_scale_label.setText(f"Logo Scale: {scale}%")
+        self.text_size_label.setText(f"Font Size: {font_size:.1f}mm")
+        self.text_spacing_label.setText(f"Text Spacing: {spacing:.1f}mm")
+        self.offset_x_label.setText(f"Offset X: {ox}")
+        self.offset_y_label.setText(f"Offset Y: {oy}")
+        self.rotation_label.setText(f"Rotation: {rot}°")
+        self.engrave_depth_label.setText(f"Engrave Depth: {depth:.1f}mm")
     
     # === File Operations ===
     
@@ -1468,26 +1537,30 @@ class MainWindow(QMainWindow):
         else:
             self.logo_preview.setText(f"Logo V{version} not found")
     
-    def _start_logo_picking(self):
-        """Enable logo position picking mode."""
+    def _start_engrave_picking(self):
+        """Enable engraving position picking mode."""
         self.viewer.set_logo_picking_mode(True)
-        self.status_bar.showMessage("Click on the RIGHT orthosis to place the logo")
+        self.status_bar.showMessage("Click on the RIGHT orthosis to place the engraving (logo + text)")
     
-    def _on_logo_picked(self, point: np.ndarray, normal: np.ndarray):
-        """Handle logo position picked."""
+    def _on_engrave_picked(self, point: np.ndarray, normal: np.ndarray):
+        """Handle engraving position picked."""
+        self._engrave_position = point.copy()
+        self._engrave_normal = normal.copy()
+        
+        # For legacy compatibility
         self._logo_position = point.copy()
         self._logo_normal = normal.copy()
         
-        self.logo_pos_info.setText(f"Position: ({point[0]:.1f}, {point[1]:.1f}, {point[2]:.1f})")
-        self.logo_pos_info.setStyleSheet("color: green;")
-        self.status_bar.showMessage("Logo position set. Adjust sliders and click Apply Logo.")
+        self.engrave_pos_info.setText(f"Position: ({point[0]:.1f}, {point[1]:.1f}, {point[2]:.1f})")
+        self.engrave_pos_info.setStyleSheet("color: green;")
+        self.status_bar.showMessage("Position set. Adjust settings and click Engrave.")
         
         self._update_ui_state()
     
-    def _apply_logo(self):
-        """Apply logo engraving to the mesh."""
-        if self._logo_position is None:
-            QMessageBox.warning(self, "Warning", "Please pick logo position first.")
+    def _apply_engraving(self):
+        """Apply combined logo and text engraving to the mesh."""
+        if self._engrave_position is None:
+            QMessageBox.warning(self, "Warning", "Please pick an engraving position first.")
             return
         
         if self.processor.logo_mesh is None:
@@ -1495,46 +1568,64 @@ class MainWindow(QMainWindow):
             return
         
         try:
-            self.status_bar.showMessage("Applying logo... please wait")
+            self.status_bar.showMessage("Applying engraving... please wait")
             QApplication.processEvents()
             
             # Get slider values
-            offset_x = self.logo_offset_x_slider.value()
-            offset_y = self.logo_offset_y_slider.value()
-            rotation = self.logo_rotation_slider.value()
-            scale = self.logo_scale_slider.value() / 100.0
-            depth = self.logo_depth_slider.value() / 10.0  # Convert to mm
+            offset_x = self.engrave_offset_x_slider.value()
+            offset_y = self.engrave_offset_y_slider.value()
+            rotation = self.engrave_rotation_slider.value()
+            logo_scale = self.logo_scale_slider.value() / 100.0
+            engrave_depth = self.engrave_depth_slider.value() / 10.0  # Common depth for logo and text
+            text_font_size = self.text_size_slider.value() / 10.0
+            text_spacing = self.text_spacing_slider.value() / 10.0
             
-            # Apply logo to processor
-            self.processor.apply_logo(
-                self._logo_position,
-                self._logo_normal,
+            # Build text (only if patient name is provided)
+            patient_name = self.patient_name_edit.text().strip()
+            text = None
+            if patient_name:
+                date_str = self.date_edit.text().strip()
+                text = f"{patient_name}\n{date_str}"
+            
+            # Apply combined engraving
+            self.processor.apply_engraving(
+                position=self._engrave_position,
+                normal=self._engrave_normal,
                 offset_x=offset_x,
                 offset_y=offset_y,
                 rotation=rotation,
-                scale=scale,
-                depth=depth
+                logo_scale=logo_scale,
+                logo_depth=engrave_depth,
+                text=text,
+                text_font_size=text_font_size,
+                text_depth=engrave_depth,  # Same depth for both
+                text_spacing=text_spacing
             )
             
             # Update viewer (don't reset camera)
             self.viewer.set_both_meshes(self.processor.orthosis_mirrored, self.processor.orthosis_original, auto_reset=False)
             
-            # Clear the markers since logo is now applied
+            # Clear the markers since engraving is now applied
             self.viewer.clear_all_markers()
             
+            self._engraving_applied = True
             self._logo_applied = True
-            self.logo_status.setText("Logo applied")
-            self.logo_status.setStyleSheet("color: green;")
-            self.status_bar.showMessage("Logo applied successfully!")
+            if text:
+                self._text_applied = True
+            
+            status_msg = "Logo" + (" and text" if text else "") + " engraved"
+            self.engrave_status.setText(status_msg)
+            self.engrave_status.setStyleSheet("color: green;")
+            self.status_bar.showMessage(status_msg + " successfully!")
             
             self._update_ui_state()
             
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Logo application failed:\n{str(e)}")
-            self.status_bar.showMessage("Logo application failed")
+            QMessageBox.critical(self, "Error", f"Engraving failed:\n{str(e)}")
+            self.status_bar.showMessage("Engraving failed")
     
-    def _reset_logo(self):
-        """Reset to remove applied logo and restore original mesh."""
+    def _reset_engraving(self):
+        """Reset to remove all engravings and restore original mesh."""
         if self.processor._pristine_mesh is None:
             return
         
@@ -1553,167 +1644,43 @@ class MainWindow(QMainWindow):
             self.viewer.clear_all_markers()
             
             # Reset state
+            self._engraving_applied = False
+            self._engrave_position = None
+            self._engrave_normal = None
             self._logo_applied = False
+            self._text_applied = False
             self._logo_position = None
             self._logo_normal = None
-            
-            # Also reset text state since pristine removes all
-            self._text_applied = False
             self._text_position = None
             self._text_normal = None
             
-            # Reset Logo UI
-            self.logo_pos_info.setText("Position: Not set")
-            self.logo_pos_info.setStyleSheet("color: gray;")
-            self.logo_status.setText("")
+            # Reset UI
+            self.engrave_pos_info.setText("Position: Not set")
+            self.engrave_pos_info.setStyleSheet("color: gray;")
+            self.engrave_status.setText("")
             
-            # Reset logo sliders
-            self.logo_offset_x_slider.setValue(0)
-            self.logo_offset_y_slider.setValue(0)
-            self.logo_rotation_slider.setValue(0)
+            # Reset sliders to defaults
             self.logo_scale_slider.setValue(100)
-            self.logo_depth_slider.setValue(6)
-            
-            # Reset Text UI
-            self.text_pos_info.setText("Position: Not set")
-            self.text_pos_info.setStyleSheet("color: gray;")
-            self.text_status.setText("")
-            
-            # Reset text sliders
-            self.text_offset_x_slider.setValue(0)
-            self.text_offset_y_slider.setValue(0)
-            self.text_rotation_slider.setValue(0)
             self.text_size_slider.setValue(40)
+            self.text_spacing_slider.setValue(60)  # 6mm default
+            self.engrave_offset_x_slider.setValue(0)
+            self.engrave_offset_y_slider.setValue(0)
+            self.engrave_rotation_slider.setValue(0)
+            self.engrave_depth_slider.setValue(6)  # 0.6mm default
             
-            self.status_bar.showMessage("Reset - original mesh restored (logo and text cleared)")
+            self.status_bar.showMessage("Engraving reset - original mesh restored")
             self._update_ui_state()
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Reset failed:\n{str(e)}")
     
-    def _reset_text(self):
-        """Reset to remove applied text (keeps logo if applied)."""
-        if self.processor._pristine_mesh is None:
-            return
-        
-        try:
-            # If logo was applied, restore to after-logo state
-            # Otherwise restore to pristine
-            if self.processor._mesh_after_logo is not None:
-                self.processor.orthosis_original = self.processor._mesh_after_logo.copy()
-                self.processor.orthosis_mirrored = self.processor._mirrored_after_logo.copy()
-                self.processor.text_applied = False
-            else:
-                self.processor._restore_to_pristine()
-            
-            # Update viewer
-            self.viewer.set_both_meshes(
-                self.processor.orthosis_mirrored, 
-                self.processor.orthosis_original, 
-                auto_reset=False
-            )
-            
-            # Clear markers
-            self.viewer.clear_all_markers()
-            
-            # Reset text state only
-            self._text_applied = False
-            self._text_position = None
-            self._text_normal = None
-            
-            # Reset Text UI
-            self.text_pos_info.setText("Position: Not set")
-            self.text_pos_info.setStyleSheet("color: gray;")
-            self.text_status.setText("")
-            
-            # Reset text sliders
-            self.text_offset_x_slider.setValue(0)
-            self.text_offset_y_slider.setValue(0)
-            self.text_rotation_slider.setValue(0)
-            self.text_size_slider.setValue(40)
-            
-            self.status_bar.showMessage("Text reset - logo preserved if applied")
-            self._update_ui_state()
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Text reset failed:\n{str(e)}")
-    
-    # === Text Operations ===
-    
-    def _start_text_picking(self):
-        """Enable text position picking mode."""
-        self.viewer.set_text_picking_mode(True)
-        self.status_bar.showMessage("Click on the RIGHT orthosis to place the text")
-    
-    def _on_text_picked(self, point: np.ndarray, normal: np.ndarray):
-        """Handle text position picked."""
-        self._text_position = point.copy()
-        self._text_normal = normal.copy()
-        
-        self.text_pos_info.setText(f"Position: ({point[0]:.1f}, {point[1]:.1f}, {point[2]:.1f})")
-        self.text_pos_info.setStyleSheet("color: green;")
-        self.status_bar.showMessage("Text position set. Adjust sliders and click Apply Text.")
-        
-        self._update_ui_state()
-    
-    def _apply_text(self):
-        """Apply text engraving to the mesh."""
-        patient_name = self.patient_name_edit.text().strip()
-        if not patient_name:
-            QMessageBox.warning(self, "Warning", "Please enter a patient name.")
-            return
-        
-        if self._text_position is None:
-            QMessageBox.warning(self, "Warning", "Please pick text position first.")
-            return
-        
-        try:
-            self.status_bar.showMessage("Applying text... please wait")
-            QApplication.processEvents()
-            
-            date_str = self.date_edit.text().strip()
-            text = f"{patient_name}\n{date_str}"
-            
-            # Get slider values
-            offset_x = self.text_offset_x_slider.value()
-            offset_y = self.text_offset_y_slider.value()
-            rotation = self.text_rotation_slider.value()
-            font_size = self.text_size_slider.value() / 10.0
-            depth = self.text_depth_slider.value() / 10.0
-            
-            # Apply text to processor
-            self.processor.apply_text(
-                text,
-                self._text_position,
-                self._text_normal,
-                offset_x=offset_x,
-                offset_y=offset_y,
-                rotation=rotation,
-                font_size=font_size,
-                depth=depth
-            )
-            
-            # Update viewer (don't reset camera)
-            self.viewer.set_both_meshes(self.processor.orthosis_mirrored, self.processor.orthosis_original, auto_reset=False)
-            
-            # Clear the markers since text is now applied
-            self.viewer.clear_all_markers()
-            
-            self._text_applied = True
-            self.text_status.setText("Text applied")
-            self.text_status.setStyleSheet("color: green;")
-            self.status_bar.showMessage("Text applied successfully!")
-            
-            self._update_ui_state()
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Text application failed:\n{str(e)}")
-            self.status_bar.showMessage("Text application failed")
-    
     # === Reset ===
     
     def _reset_positions(self):
-        """Reset logo and text positions."""
+        """Reset engraving positions."""
+        self._engrave_position = None
+        self._engrave_normal = None
+        self._engraving_applied = False
         self._logo_position = None
         self._logo_normal = None
         self._text_position = None
@@ -1721,23 +1688,19 @@ class MainWindow(QMainWindow):
         self._logo_applied = False
         self._text_applied = False
         
-        self.logo_pos_info.setText("Position: Not set")
-        self.logo_pos_info.setStyleSheet("color: gray;")
-        self.text_pos_info.setText("Position: Not set")
-        self.text_pos_info.setStyleSheet("color: gray;")
-        self.logo_status.setText("")
-        self.text_status.setText("")
+        self.engrave_pos_info.setText("Position: Not set")
+        self.engrave_pos_info.setStyleSheet("color: gray;")
+        self.engrave_status.setText("")
         self.export_status.setText("")
         
-        # Reset sliders
-        self.logo_offset_x_slider.setValue(0)
-        self.logo_offset_y_slider.setValue(0)
-        self.logo_rotation_slider.setValue(0)
+        # Reset sliders to defaults
         self.logo_scale_slider.setValue(100)
-        self.text_offset_x_slider.setValue(0)
-        self.text_offset_y_slider.setValue(0)
-        self.text_rotation_slider.setValue(0)
         self.text_size_slider.setValue(40)
+        self.text_spacing_slider.setValue(60)  # 6mm default
+        self.engrave_offset_x_slider.setValue(0)
+        self.engrave_offset_y_slider.setValue(0)
+        self.engrave_rotation_slider.setValue(0)
+        self.engrave_depth_slider.setValue(6)  # 0.6mm default
         
         self.viewer.clear_all_markers()
     

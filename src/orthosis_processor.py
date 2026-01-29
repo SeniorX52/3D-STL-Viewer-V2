@@ -1006,6 +1006,167 @@ class OrthosisProcessor:
         print(f"Text applied in {elapsed*1000:.1f}ms (parallel L/R)")
         
         return (left_mesh, right_mesh)
+
+    def apply_engraving(self,
+                        position: np.ndarray,
+                        normal: np.ndarray,
+                        offset_x: float = 0,
+                        offset_y: float = 0,
+                        rotation: float = 0,
+                        logo_scale: float = 1.0,
+                        logo_depth: float = 0.6,
+                        text: Optional[str] = None,
+                        text_font_size: float = 4.0,
+                        text_depth: float = 0.6,
+                        text_spacing: float = 2.0) -> Tuple[trimesh.Trimesh, trimesh.Trimesh]:
+        """
+        Apply combined logo and text engraving in a single operation.
+        
+        Logo is placed at the specified position. Text (if provided) is placed
+        below the logo with configurable spacing. Both share the same offset
+        and rotation values.
+        
+        Args:
+            position: 3D position for engraving placement (logo center)
+            normal: Surface normal at the position
+            offset_x: X offset in mm (moves entire engraving)
+            offset_y: Y offset in mm (moves entire engraving)
+            rotation: Rotation angle in degrees (rotates entire engraving)
+            logo_scale: Scale factor for logo (1.0 = 100%)
+            logo_depth: Engraving depth for logo in mm
+            text: Optional text to engrave below logo (None = no text)
+            text_font_size: Font size for text in mm
+            text_depth: Engraving depth for text in mm
+            text_spacing: Spacing between logo bottom and text top in mm
+            
+        Returns:
+            Tuple of (left_engraved, right_engraved)
+        """
+        import time
+        start_time = time.perf_counter()
+        
+        if self._pristine_mesh is None:
+            raise ValueError("No orthosis loaded")
+        if self.logo_mesh is None:
+            raise ValueError("No logo loaded")
+        
+        # Restore to pristine state before applying
+        self._restore_to_pristine()
+        
+        # Store position for export
+        self.logo_position = position.copy()
+        self.logo_normal = normal.copy()
+        
+        print(f"apply_engraving: position={position}, normal={normal}")
+        print(f"apply_engraving: offset=({offset_x}, {offset_y}), rotation={rotation}")
+        print(f"apply_engraving: logo_scale={logo_scale}, text='{text}', spacing={text_spacing}")
+        
+        # Apply offsets in local tangent plane
+        offset_pos = self._apply_tangent_offset(position, normal, offset_x, offset_y)
+        
+        # Calculate local coordinate system for positioning text below logo
+        up = np.array([0, 0, 1])
+        if abs(np.dot(normal, up)) > 0.99:
+            up = np.array([0, 1, 0])
+        tangent_x = np.cross(up, normal)
+        tangent_x = tangent_x / np.linalg.norm(tangent_x)
+        tangent_y = np.cross(normal, tangent_x)
+        tangent_y = tangent_y / np.linalg.norm(tangent_y)
+        
+        # Get logo dimensions to calculate text position
+        logo_copy = self.logo_mesh.copy()
+        if logo_scale != 1.0:
+            scale_matrix = np.diag([logo_scale, logo_scale, 1, 1])
+            logo_copy.apply_transform(scale_matrix)
+        logo_bounds = logo_copy.bounds
+        logo_height = logo_bounds[1][1] - logo_bounds[0][1]  # Y dimension in local coords
+        
+        # Prepare meshes for both sides
+        right_mesh = self.orthosis_original.copy()
+        left_mesh = self.mirror_orthosis(self.orthosis_original, axis='y')
+        
+        # Mirror positions for left side
+        offset_pos_mirrored = self._mirror_point(offset_pos, 'y')
+        normal_mirrored = self._mirror_point(normal, 'y')
+        
+        def process_side(mesh, pos, norm, is_right_side):
+            """Process one side (logo + text)."""
+            result_mesh = mesh
+            
+            # --- Apply Logo ---
+            logo_copy_side = self.logo_mesh.copy()
+            if logo_scale != 1.0:
+                scale_matrix = np.diag([logo_scale, logo_scale, 1, 1])
+                logo_copy_side.apply_transform(scale_matrix)
+            if rotation != 0:
+                rot_rad = np.radians(rotation if is_right_side else -rotation)
+                rot_matrix = trimesh.transformations.rotation_matrix(rot_rad, [0, 0, 1])
+                logo_copy_side.apply_transform(rot_matrix)
+            
+            result_mesh = self._apply_logo_to_mesh(
+                result_mesh,
+                logo_copy_side,
+                pos,
+                norm,
+                logo_depth
+            )
+            
+            # --- Apply Text (if provided) ---
+            if text and text.strip():
+                # Calculate text position below logo
+                # Move down by half logo height + spacing + some margin
+                text_offset_y = -(logo_height / 2 + text_spacing + text_font_size / 2)
+                
+                # Apply the rotation to get the correct down direction
+                rot_rad = np.radians(rotation if is_right_side else -rotation)
+                cos_r, sin_r = np.cos(rot_rad), np.sin(rot_rad)
+                
+                # Rotated tangent vectors
+                local_tangent_x = tangent_x if is_right_side else self._mirror_point(tangent_x, 'y')
+                local_tangent_y = tangent_y if is_right_side else self._mirror_point(tangent_y, 'y')
+                
+                # Apply rotation to get actual offset direction
+                rotated_offset_x = cos_r * 0 - sin_r * text_offset_y
+                rotated_offset_y = sin_r * 0 + cos_r * text_offset_y
+                
+                text_pos = pos + local_tangent_x * rotated_offset_x + local_tangent_y * rotated_offset_y
+                
+                result_mesh = self._apply_text_to_mesh_with_params(
+                    result_mesh,
+                    text,
+                    text_pos,
+                    norm,
+                    rotation if is_right_side else -rotation,
+                    text_font_size,
+                    text_depth
+                )
+            
+            return result_mesh
+        
+        # Process both sides in parallel
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_right = executor.submit(process_side, right_mesh, offset_pos, normal, True)
+            future_left = executor.submit(process_side, left_mesh, offset_pos_mirrored, normal_mirrored, False)
+            
+            right_mesh = future_right.result()
+            left_mesh = future_left.result()
+        
+        # Store results
+        self.orthosis_mirrored = left_mesh
+        self.orthosis_original = right_mesh
+        self.is_engraved = True
+        self.logo_applied = True
+        if text and text.strip():
+            self.text_applied = True
+        
+        # Store state for potential re-engraving
+        self._mesh_after_logo = right_mesh.copy()
+        self._mirrored_after_logo = left_mesh.copy()
+        
+        elapsed = time.perf_counter() - start_time
+        print(f"Combined engraving applied in {elapsed*1000:.1f}ms (parallel L/R)")
+        
+        return (left_mesh, right_mesh)
     
     def _apply_tangent_offset(self, position: np.ndarray, normal: np.ndarray, 
                                offset_x: float, offset_y: float) -> np.ndarray:
@@ -1057,13 +1218,6 @@ class OrthosisProcessor:
         
         print(f"Text position: {position}, normal: {normal}")
         print(f"Text bounds before wrap: {text_mesh.bounds}")
-        
-        # Compute approximate text region size for local refinement
-        text_size = text_mesh.bounds[1] - text_mesh.bounds[0]
-        region_radius = max(text_size[0], text_size[1]) * 0.6  # Radius of region to refine
-        
-        # Refine the target mesh locally in the engraving region for smoother results
-        mesh = self._refine_mesh_locally(mesh, position, region_radius)
         
         # Wrap the text to follow the curved surface
         wrapped_text = self._wrap_mesh_to_surface(
@@ -1311,13 +1465,6 @@ class OrthosisProcessor:
         print(f"Logo bounds before wrap: {logo.bounds}")
         print(f"Mesh bounds: {mesh.bounds}")
         
-        # Compute approximate engraving region size for local refinement
-        logo_size = logo.bounds[1] - logo.bounds[0]
-        region_radius = max(logo_size[0], logo_size[1]) * 0.6  # Radius of region to refine
-        
-        # Refine the target mesh locally in the engraving region for smoother results
-        mesh = self._refine_mesh_locally(mesh, position, region_radius)
-        
         # Wrap the logo to follow the curved surface
         wrapped_logo = self._wrap_mesh_to_surface(
             flat_mesh=logo,
@@ -1387,120 +1534,6 @@ class OrthosisProcessor:
                 return result
         except Exception as e:
             print(f"Text boolean failed: {e}")
-        
-        return mesh
-    
-    def _refine_mesh_locally(self, 
-                              mesh: trimesh.Trimesh,
-                              center: np.ndarray,
-                              radius: float,
-                              max_edge_length: float = 0.1) -> trimesh.Trimesh:
-        """
-        Refine (subdivide) mesh faces locally in a spherical region.
-        
-        This increases polygon density in the engraving area to reduce
-        visible triangulation artifacts after boolean operations.
-        
-        Args:
-            mesh: Target mesh to refine
-            center: Center point of the region to refine
-            radius: Radius of the spherical region to refine
-            max_edge_length: Target maximum edge length in mm (smaller = more triangles)
-                             Default 0.1mm for ultra-high-quality engraving on low-poly meshes
-            
-        Returns:
-            Refined mesh with higher polygon density in the target region
-        """
-        try:
-            import meshlib.mrmeshpy as mr
-            import tempfile
-            import os
-            
-            # Calculate region larger than engraving to ensure smooth transition
-            expand_factor = 2.0  # 100% larger region for smoother blending
-            actual_radius = radius * expand_factor
-            
-            print(f"Refining mesh locally: center={center}, radius={actual_radius:.1f}mm, max_edge={max_edge_length}mm")
-            
-            # Find faces within the refinement region
-            face_centers = mesh.triangles_center
-            distances = np.linalg.norm(face_centers - center, axis=1)
-            faces_in_region = np.where(distances <= actual_radius)[0]
-            
-            if len(faces_in_region) == 0:
-                print("No faces found in refinement region")
-                return mesh
-            
-            print(f"Found {len(faces_in_region)} faces in refinement region (of {len(mesh.faces)} total)")
-            
-            # Use MeshLib for high-quality local remeshing
-            with tempfile.TemporaryDirectory() as tmpdir:
-                mesh_path = os.path.join(tmpdir, "mesh.stl")
-                result_path = os.path.join(tmpdir, "refined.stl")
-                
-                mesh.export(mesh_path)
-                mr_mesh = mr.loadMesh(mesh_path)
-                
-                # Get face IDs that need refinement
-                # MeshLib uses face IDs, we need to identify them
-                num_faces = mr_mesh.topology.numValidFaces()
-                
-                # Create a subdivision of faces in region using MeshLib
-                # We'll use edge subdivision for faces in the region
-                settings = mr.SubdivideSettings()
-                settings.maxEdgeLen = max_edge_length  # Target edge length in mm (aggressive)
-                settings.maxEdgeSplits = 10000000  # Allow many splits
-                settings.maxDeviationAfterFlip = 0.05  # Keep surface accurate
-                
-                # Create a region bitmap for local refinement
-                region = mr.FaceBitSet()
-                region.resize(num_faces)
-                for face_idx in faces_in_region:
-                    if face_idx < num_faces:
-                        region.set(mr.FaceId(int(face_idx)), True)
-                
-                settings.region = region
-                
-                # Perform local subdivision
-                mr.subdivideMesh(mr_mesh, settings)
-                
-                new_num_faces = mr_mesh.topology.numValidFaces()
-                print(f"Mesh refined: {num_faces} -> {new_num_faces} faces (+{new_num_faces - num_faces})")
-                
-                # Save and reload
-                mr.saveMesh(mr_mesh, result_path)
-                refined_mesh = trimesh.load(result_path, force='mesh')
-                
-                if refined_mesh is not None and len(refined_mesh.vertices) > 0:
-                    refined_mesh.fix_normals()
-                    return refined_mesh
-                    
-        except ImportError:
-            print("MeshLib not available for local refinement, using fallback")
-        except Exception as e:
-            print(f"Local refinement failed: {e}, using original mesh")
-        
-        # Fallback: use trimesh subdivision if MeshLib fails
-        try:
-            # Aggressive subdivision for low-poly meshes
-            avg_face_area = mesh.area / len(mesh.faces)
-            target_face_area = (max_edge_length ** 2) * 0.433  # Area of equilateral triangle
-            
-            # Subdivide multiple times if needed
-            subdivisions_needed = 0
-            current_area = avg_face_area
-            while current_area > target_face_area and subdivisions_needed < 4:
-                current_area /= 4  # Each subdivision quarters face area
-                subdivisions_needed += 1
-            
-            if subdivisions_needed > 0:
-                print(f"Fallback: subdividing entire mesh {subdivisions_needed} times")
-                result = mesh
-                for _ in range(subdivisions_needed):
-                    result = result.subdivide()
-                return result
-        except Exception as e:
-            print(f"Fallback subdivision failed: {e}")
         
         return mesh
     
