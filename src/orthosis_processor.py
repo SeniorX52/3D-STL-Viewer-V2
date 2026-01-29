@@ -1058,12 +1058,27 @@ class OrthosisProcessor:
         print(f"Text position: {position}, normal: {normal}")
         print(f"Text bounds before wrap: {text_mesh.bounds}")
         
-        # Compute approximate text region size for local refinement
+        # Compute approximate text region size
         text_size = text_mesh.bounds[1] - text_mesh.bounds[0]
-        region_radius = max(text_size[0], text_size[1]) * 0.6  # Radius of region to refine
+        text_width = text_size[0]
+        text_height = text_size[1]
         
-        # Refine the target mesh locally in the engraving region for smoother results
-        mesh = self._refine_mesh_locally(mesh, position, region_radius)
+        # === ADD SMOOTH BACKING LAYER ===
+        # Create a high-poly backing layer to provide a clean surface for engraving
+        backing_margin = 2.0  # mm extra around text
+        backing_thickness = depth + 0.5  # Must be thicker than engraving depth
+        
+        backing = self._create_smooth_backing_layer(
+            target_mesh=mesh,
+            center_pos=position,
+            surface_normal=normal,
+            width=text_width + backing_margin * 2,
+            height=text_height + backing_margin * 2,
+            thickness=backing_thickness
+        )
+        
+        if backing is not None:
+            mesh = self._apply_backing_layer(mesh, backing)
         
         # Wrap the text to follow the curved surface
         wrapped_text = self._wrap_mesh_to_surface(
@@ -1086,7 +1101,6 @@ class OrthosisProcessor:
         
         return mesh
         
-        return mesh
     def _wrap_mesh_to_surface(self, 
                               flat_mesh: trimesh.Trimesh,
                               target_mesh: trimesh.Trimesh,
@@ -1311,12 +1325,28 @@ class OrthosisProcessor:
         print(f"Logo bounds before wrap: {logo.bounds}")
         print(f"Mesh bounds: {mesh.bounds}")
         
-        # Compute approximate engraving region size for local refinement
+        # Compute approximate engraving region size
         logo_size = logo.bounds[1] - logo.bounds[0]
-        region_radius = max(logo_size[0], logo_size[1]) * 0.6  # Radius of region to refine
+        logo_width = logo_size[0]
+        logo_height = logo_size[1]
+        region_radius = max(logo_width, logo_height) * 0.6
         
-        # Refine the target mesh locally in the engraving region for smoother results
-        mesh = self._refine_mesh_locally(mesh, position, region_radius)
+        # === ADD SMOOTH BACKING LAYER ===
+        # Create a high-poly backing layer to provide a clean surface for engraving
+        backing_margin = 2.0  # mm extra around logo
+        backing_thickness = depth + 0.5  # Must be thicker than engraving depth
+        
+        backing = self._create_smooth_backing_layer(
+            target_mesh=mesh,
+            center_pos=position,
+            surface_normal=normal,
+            width=logo_width + backing_margin * 2,
+            height=logo_height + backing_margin * 2,
+            thickness=backing_thickness
+        )
+        
+        if backing is not None:
+            mesh = self._apply_backing_layer(mesh, backing)
         
         # Wrap the logo to follow the curved surface
         wrapped_logo = self._wrap_mesh_to_surface(
@@ -1390,6 +1420,225 @@ class OrthosisProcessor:
         
         return mesh
     
+    def _create_smooth_backing_layer(self,
+                                      target_mesh: trimesh.Trimesh,
+                                      center_pos: np.ndarray,
+                                      surface_normal: np.ndarray,
+                                      width: float,
+                                      height: float,
+                                      thickness: float = 0.8) -> Optional[trimesh.Trimesh]:
+        """
+        Create a smooth, high-poly backing layer that follows the curved surface.
+        
+        This layer provides a clean surface for engraving, hiding the triangulation
+        artifacts from low-poly meshes underneath.
+        
+        Args:
+            target_mesh: The mesh surface to conform to
+            center_pos: Center position on the surface
+            surface_normal: Normal vector at the center position
+            width: Width of the backing layer (slightly larger than logo/text)
+            height: Height of the backing layer
+            thickness: Thickness of the layer in mm (should be > engrave depth)
+            
+        Returns:
+            High-poly curved patch mesh, or None if creation fails
+        """
+        try:
+            print(f"Creating smooth backing layer: {width:.1f}x{height:.1f}mm, thickness={thickness:.1f}mm")
+            
+            # Normalize the surface normal
+            normal = surface_normal / np.linalg.norm(surface_normal)
+            
+            # Build coordinate frame
+            world_up = np.array([0.0, 0.0, 1.0])
+            mesh_up = world_up.copy()
+            
+            mesh_right = np.cross(mesh_up, normal)
+            if np.linalg.norm(mesh_right) < 0.001:
+                mesh_right = np.array([1.0, 0.0, 0.0])
+            else:
+                mesh_right = mesh_right / np.linalg.norm(mesh_right)
+            mesh_right = -mesh_right  # Flip to match text orientation
+            
+            # === CREATE HIGH-RESOLUTION GRID ===
+            # Use high density for smooth result (~0.5mm spacing)
+            grid_spacing = 0.5  # mm between grid points
+            num_x = max(20, int(width / grid_spacing) + 1)
+            num_y = max(20, int(height / grid_spacing) + 1)
+            
+            print(f"Backing layer grid: {num_x}x{num_y} = {num_x * num_y} vertices")
+            
+            # Create grid coordinates
+            x_coords = np.linspace(-width / 2, width / 2, num_x)
+            y_coords = np.linspace(-height / 2, height / 2, num_y)
+            xx, yy = np.meshgrid(x_coords, y_coords)
+            
+            # === RAY CAST TO FIND SURFACE POSITIONS ===
+            # Compute world positions for each grid point
+            num_points = num_x * num_y
+            x_flat = xx.ravel()
+            y_flat = yy.ravel()
+            
+            # Grid points in world space (on tangent plane)
+            grid_points = (center_pos.reshape(1, 3) + 
+                          np.outer(x_flat, mesh_right) + 
+                          np.outer(y_flat, mesh_up))
+            
+            # Ray cast from above the surface
+            ray_origins = grid_points + normal * 50.0
+            ray_directions = np.tile(-normal, (num_points, 1))
+            
+            locations, index_ray, _ = target_mesh.ray.intersects_location(
+                ray_origins=ray_origins,
+                ray_directions=ray_directions
+            )
+            
+            # Build surface height grid
+            surface_positions = grid_points.copy()  # Fallback to tangent plane
+            
+            if len(locations) > 0:
+                # For each ray, find closest hit
+                for ray_idx in range(num_points):
+                    mask = index_ray == ray_idx
+                    if np.any(mask):
+                        hits = locations[mask]
+                        distances = np.linalg.norm(hits - ray_origins[ray_idx], axis=1)
+                        closest = hits[np.argmin(distances)]
+                        surface_positions[ray_idx] = closest
+            
+            # === BUILD MESH FROM GRID ===
+            # Create top surface (slightly above the mesh surface)
+            top_vertices = surface_positions + normal * 0.1  # Slightly above surface
+            
+            # Create bottom surface (below surface by thickness)
+            bottom_vertices = surface_positions - normal * thickness
+            
+            # Combine vertices: top layer first, then bottom layer
+            all_vertices = np.vstack([top_vertices, bottom_vertices])
+            
+            # Create faces for top surface (triangulated grid)
+            faces_list = []
+            for j in range(num_y - 1):
+                for i in range(num_x - 1):
+                    # Top surface indices
+                    tl = j * num_x + i
+                    tr = j * num_x + i + 1
+                    bl = (j + 1) * num_x + i
+                    br = (j + 1) * num_x + i + 1
+                    
+                    # Two triangles per quad (top surface - outward facing)
+                    faces_list.append([tl, bl, tr])
+                    faces_list.append([tr, bl, br])
+                    
+                    # Bottom surface indices (offset by num_points)
+                    btl = tl + num_points
+                    btr = tr + num_points
+                    bbl = bl + num_points
+                    bbr = br + num_points
+                    
+                    # Two triangles per quad (bottom surface - inward facing)
+                    faces_list.append([btl, btr, bbl])
+                    faces_list.append([btr, bbr, bbl])
+            
+            # Add side faces to close the mesh
+            # Top edge (j=0)
+            for i in range(num_x - 1):
+                tl = i
+                tr = i + 1
+                btl = i + num_points
+                btr = i + 1 + num_points
+                faces_list.append([tl, tr, btl])
+                faces_list.append([tr, btr, btl])
+            
+            # Bottom edge (j=num_y-1)
+            for i in range(num_x - 1):
+                tl = (num_y - 1) * num_x + i
+                tr = (num_y - 1) * num_x + i + 1
+                btl = tl + num_points
+                btr = tr + num_points
+                faces_list.append([tl, btl, tr])
+                faces_list.append([tr, btl, btr])
+            
+            # Left edge (i=0)
+            for j in range(num_y - 1):
+                top_curr = j * num_x
+                top_next = (j + 1) * num_x
+                bot_curr = top_curr + num_points
+                bot_next = top_next + num_points
+                faces_list.append([top_curr, bot_curr, top_next])
+                faces_list.append([top_next, bot_curr, bot_next])
+            
+            # Right edge (i=num_x-1)
+            for j in range(num_y - 1):
+                top_curr = j * num_x + (num_x - 1)
+                top_next = (j + 1) * num_x + (num_x - 1)
+                bot_curr = top_curr + num_points
+                bot_next = top_next + num_points
+                faces_list.append([top_curr, top_next, bot_curr])
+                faces_list.append([top_next, bot_next, bot_curr])
+            
+            faces = np.array(faces_list)
+            
+            # Create the mesh
+            backing_mesh = trimesh.Trimesh(vertices=all_vertices, faces=faces)
+            backing_mesh.fix_normals()
+            
+            print(f"Backing layer created: {len(backing_mesh.vertices)} vertices, {len(backing_mesh.faces)} faces")
+            
+            return backing_mesh
+            
+        except Exception as e:
+            print(f"Failed to create backing layer: {e}")
+            return None
+    
+    def _apply_backing_layer(self,
+                              mesh: trimesh.Trimesh,
+                              backing: trimesh.Trimesh) -> trimesh.Trimesh:
+        """
+        Boolean-union the backing layer onto the target mesh.
+        
+        Args:
+            mesh: Target mesh
+            backing: Backing layer mesh
+            
+        Returns:
+            Mesh with backing layer added
+        """
+        try:
+            import meshlib.mrmeshpy as mr
+            import tempfile
+            import os
+            
+            print("Applying backing layer via boolean union...")
+            
+            with tempfile.TemporaryDirectory() as tmpdir:
+                mesh_path = os.path.join(tmpdir, "mesh.stl")
+                backing_path = os.path.join(tmpdir, "backing.stl")
+                result_path = os.path.join(tmpdir, "result.stl")
+                
+                mesh.export(mesh_path)
+                backing.export(backing_path)
+                
+                mesh_mr = mr.loadMesh(mesh_path)
+                backing_mr = mr.loadMesh(backing_path)
+                
+                # Boolean union
+                result = mr.boolean(mesh_mr, backing_mr, mr.BooleanOperation.Union)
+                
+                if result.valid() and result.mesh.topology.numValidFaces() > 0:
+                    mr.saveMesh(result.mesh, result_path)
+                    result_mesh = trimesh.load(result_path, force='mesh')
+                    if result_mesh is not None and len(result_mesh.vertices) > 0:
+                        result_mesh.fix_normals()
+                        print(f"Backing layer applied: {len(result_mesh.faces)} faces")
+                        return result_mesh
+                        
+        except Exception as e:
+            print(f"Backing layer union failed: {e}")
+        
+        return mesh
+
     def _refine_mesh_locally(self, 
                               mesh: trimesh.Trimesh,
                               center: np.ndarray,
